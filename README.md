@@ -22,6 +22,22 @@ Filebeat на портале отправляет журналы в топики
 
 ## Запуск
 
+Клонируйте репозиторий. Git откроет ветку по умолчанию.
+
+```powershell
+git clone https://github.com/airiga1897/OTUS_DZ08.git
+Set-Location OTUS_DZ08
+```
+
+Если для проверки нужна другая ветка или в открытой ветке нет файлов стенда,
+посмотрите список и переключитесь до подготовки окружения. В `git switch`
+укажите имя ветки без префикса `remotes/origin/`.
+
+```powershell
+git branch --all
+git switch 'ИМЯ_ВЕТКИ'
+```
+
 На Windows выполняйте команды из корня клона в PowerShell 5.1 или 7. Нужны
 Python 3.12–3.14, OpenSSH, Terraform от 1.6 и Yandex Cloud CLI. Оператору
 нужны права на управление Compute Cloud и VPC в каталоге и просмотр квот облака.
