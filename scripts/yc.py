@@ -2,8 +2,11 @@
 from collections import defaultdict
 from ipaddress import IPv4Network, ip_network
 from itertools import product
+from pathlib import Path
 import json
-import os
+import re
+from shutil import which
+import subprocess
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -24,13 +27,30 @@ TYPES = {
 }
 
 
+def profile_value(cli, *args, pattern):
+    label = " ".join(args)
+    hint = "Check the active yc profile or run yc init --no-browser."
+    try:
+        result = subprocess.run([cli, *args], check=True, capture_output=True,
+                                encoding="utf-8", errors="replace", timeout=60)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise RuntimeError(f"yc {label} failed. {hint}") from error
+    value = result.stdout.strip()
+    if not re.fullmatch(pattern, value):
+        raise RuntimeError(f"yc {label} returned an invalid value. {hint}")
+    return value
+
+
 class Cloud:
     def __init__(self):
-        self.cloud = os.environ.get("YC_CLOUD_ID")
-        self.folder = os.environ.get("YC_FOLDER_ID")
-        self.token = os.environ.get("YC_TOKEN")
-        if not all((self.cloud, self.folder, self.token)):
-            raise ValueError("Set YC_CLOUD_ID, YC_FOLDER_ID and YC_TOKEN using the yc commands in README.md.")
+        bundled = Path(__file__).resolve().parents[1] / ".tools/bin/yc.exe"
+        cli = which("yc") or (str(bundled) if bundled.is_file() else None)
+        if not cli:
+            raise RuntimeError("Install yc in PATH or place yc.exe in .tools/bin.")
+
+        self.cloud = profile_value(cli, "config", "get", "cloud-id", pattern=r"[a-z0-9]+")
+        self.folder = profile_value(cli, "config", "get", "folder-id", pattern=r"[a-z0-9]+")
+        self.token = profile_value(cli, "iam", "create-token", "--no-browser", pattern=r"\S+")
 
     def get(self, base, path, *, missing_ok=False, **query):
         url = f"{base}/{path}?{urlencode(query)}"

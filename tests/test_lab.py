@@ -4,6 +4,8 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import patch
 import json
+import os
+import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,6 +22,44 @@ importer = module_from_spec(spec)
 # The importer runs on Ubuntu. The tests exercise its pure logic on Windows.
 with patch.dict(sys.modules, {"fcntl": object()}):
     spec.loader.exec_module(importer)
+
+
+class AuthorizationTest(TestCase):
+    def test_cloud_reads_the_active_profile(self):
+        with patch("yc.which", return_value="yc"), patch("yc.subprocess.run") as run:
+            run.side_effect = [subprocess.CompletedProcess([], 0, value)
+                               for value in ("cloud\n", "folder\n", "profiletoken\n")]
+            with patch.dict(os.environ, {"YC_TOKEN": "oldtoken", "YC_FOLDER_ID": "oldfolder"}):
+                cloud = Cloud()
+                self.assertEqual(os.environ["YC_TOKEN"], "oldtoken")
+            self.assertEqual((cloud.cloud, cloud.folder, cloud.token), ("cloud", "folder", "profiletoken"))
+            self.assertEqual([call.args[0] for call in run.call_args_list], [
+                ["yc", "config", "get", "cloud-id"],
+                ["yc", "config", "get", "folder-id"],
+                ["yc", "iam", "create-token", "--no-browser"],
+            ])
+
+    def test_missing_profile_stops_before_cloud_or_terraform_calls(self):
+        with TemporaryDirectory() as path, patch("yc.which", return_value="yc"), patch(
+            "yc.subprocess.run", side_effect=subprocess.CalledProcessError(1, ["yc"])
+        ) as run, patch.object(Cloud, "confirm_folder") as api, patch.object(Terraform, "init") as init:
+            lab = Lab(Path(path))
+            with self.assertRaisesRegex(RuntimeError, "yc init --no-browser"):
+                lab.deploy()
+            run.assert_called_once()
+            api.assert_not_called()
+            init.assert_not_called()
+            self.assertFalse(lab.context.exists())
+
+    def test_terraform_plan_and_apply_receive_the_profile_token(self):
+        with TemporaryDirectory() as path, patch("runtime.run", side_effect=[None, "{}", None]) as run:
+            with patch.dict(os.environ, {"YC_TOKEN": "oldtoken"}):
+                Terraform(Path(path)).plan_apply(token="profiletoken")
+                self.assertEqual(os.environ["YC_TOKEN"], "oldtoken")
+            plan, show, apply = run.call_args_list
+            self.assertEqual([call.args[2] for call in (plan, show, apply)], ["plan", "show", "apply"])
+            self.assertEqual(plan.kwargs["env"]["YC_TOKEN"], "profiletoken")
+            self.assertEqual(apply.kwargs["env"]["YC_TOKEN"], "profiletoken")
 
 
 class PlacementTest(TestCase):
@@ -132,7 +172,7 @@ class StateTest(TestCase):
             }]}
             with patch.object(tf, "call", side_effect=[None, json.dumps(plan)]) as call:
                 with self.assertRaisesRegex(RuntimeError, "unexpected Terraform action"):
-                    tf.plan_apply()
+                    tf.plan_apply(token="profiletoken")
                 self.assertEqual(call.call_count, 2)
 
     def test_destroy_rejects_resources_in_another_folder(self):

@@ -92,7 +92,7 @@ class Lab:
             raise RuntimeError("YC and state disagree; keep the files for ownership diagnosis.")
         self.prepare_variables(context)
         self.tf.init()
-        self.tf.plan_apply()
+        self.tf.plan_apply(token=cloud.token)
         context["lineage"] = read(self.tf.state)["lineage"]
         save(self.context, context)
         if cloud.inventory(context["name"]) != self.tf.resources(context):
@@ -123,7 +123,7 @@ class Lab:
         cloud.confirm_ownership(context["name"], owned, found)
         if owned:
             self.tf.init()
-            self.tf.plan_apply(destroy=True)
+            self.tf.plan_apply(token=cloud.token, destroy=True)
         for attempt in range(10):
             if not self.tf.resources(context) and not cloud.inventory(context["name"]):
                 self.clean()

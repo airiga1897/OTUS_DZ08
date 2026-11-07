@@ -84,24 +84,26 @@ class Terraform:
         self.state = local / "terraform.tfstate"
         self.plan = local / "saved.tfplan"
 
-    def call(self, *args, capture=False):
+    def call(self, *args, capture=False, token=None):
         env = dict(os.environ, TF_DATA_DIR=str(self.local / "terraform-data"),
                    TF_IN_AUTOMATION="true", TF_INPUT="false")
+        if token is not None:
+            env["YC_TOKEN"] = token
         return run("terraform", f"-chdir={ROOT / 'terraform'}", *args, capture=capture, env=env)
 
     def init(self):
         self.call("init", "-input=false", "-lockfile=readonly")
 
-    def plan_apply(self, destroy=False):
+    def plan_apply(self, *, token, destroy=False):
         mode = ["-destroy"] if destroy else []
         self.call("plan", *mode, "-input=false", f"-state={self.state}",
-                  f"-var-file={self.local / 'terraform.tfvars.json'}", f"-out={self.plan}")
+                  f"-var-file={self.local / 'terraform.tfvars.json'}", f"-out={self.plan}", token=token)
         data = json.loads(self.call("show", "-json", str(self.plan), capture=True))
         allowed = {("no-op",), ("delete",) if destroy else ("create",)}
         for change in data.get("resource_changes", []):
             if change["type"] not in TYPES or tuple(change["change"]["actions"]) not in allowed:
                 raise RuntimeError(f"Refusing unexpected Terraform action for {change['address']}.")
-        self.call("apply", "-input=false", f"-state={self.state}", str(self.plan))
+        self.call("apply", "-input=false", f"-state={self.state}", str(self.plan), token=token)
 
     def resources(self, context):
         if not self.state.exists():

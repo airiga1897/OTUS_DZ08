@@ -27,22 +27,12 @@ Python 3.12–3.14, OpenSSH, Terraform от 1.6 и Yandex Cloud CLI. Опера�
 нужны права на управление Compute Cloud и VPC в каталоге и просмотр квот облака.
 
 Если профиль ещё не настроен, выполните `yc init --no-browser` и выберите облако
-и каталог стенда. Для локальной копии CLI используйте
-`.\.tools\bin\yc.exe init --no-browser`. Подготовьте окружение и получите
-временный токен из активного профиля в той же сессии PowerShell.
+и каталог стенда. `lab.py` берёт ID облака, ID каталога и временный IAM-токен
+из активного профиля `yc` при `deploy` и `destroy`. Если профиль не настроен,
+команда останавливается до обращения к облачным ресурсам.
 
 ```powershell
 .\scripts\setup.ps1
-if ($LASTEXITCODE -ne 0) { throw 'Подготовка окружения не завершилась' }
-
-$yc = (Get-Command yc -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
-if (-not $yc) { $yc = (Resolve-Path .\.tools\bin\yc.exe -ErrorAction Stop).Path }
-$env:YC_CLOUD_ID = & $yc config get cloud-id
-if ($LASTEXITCODE -ne 0 -or -not $env:YC_CLOUD_ID) { throw 'Не получен ID облака YC' }
-$env:YC_FOLDER_ID = & $yc config get folder-id
-if ($LASTEXITCODE -ne 0 -or -not $env:YC_FOLDER_ID) { throw 'Не получен ID каталога YC' }
-$env:YC_TOKEN = & $yc iam create-token --no-browser
-if ($LASTEXITCODE -ne 0 -or -not $env:YC_TOKEN) { throw 'Не получен IAM-токен YC' }
 ```
 
 `deploy` проверяет квоты перед созданием стенда. Если SSH может идти через
@@ -77,13 +67,10 @@ if ($LASTEXITCODE -ne 0) { throw 'Развёртывание не заверши
 
 ## Удаление
 
-Закройте SSH-туннели через `Ctrl+C`. Если IAM-токен истёк, получите новый
-в той же сессии PowerShell. После подтверждения удаления очистите токен.
+Закройте SSH-туннели через `Ctrl+C` и удалите стенд из того же клона.
 
 ```powershell
 .\.venv\Scripts\python.exe scripts/lab.py destroy
-if ($LASTEXITCODE -ne 0) { throw 'Удаление стенда не подтверждено' }
-Remove-Item Env:YC_TOKEN -ErrorAction SilentlyContinue
 ```
 
 Инфраструктура описана в [Terraform](terraform/), настройка служб в
