@@ -1,0 +1,31 @@
+input {
+  kafka {
+    bootstrap_servers => "{{ logs_address }}:9092,{{ logs_address }}:9093"
+    topics => ["nginx", "wordpress"]
+    group_id => "otus-dz08-logstash"
+    auto_offset_reset => "earliest"
+    enable_auto_commit => false
+    decorate_events => "basic"
+    codec => json
+  }
+}
+filter {
+  if [@metadata][kafka][topic] == "nginx" {
+    mutate { add_field => { "[@metadata][target]" => "logs-nginx" } }
+  } else if [@metadata][kafka][topic] == "wordpress" {
+    mutate { add_field => { "[@metadata][target]" => "logs-wordpress" } }
+  }
+}
+output {
+  if [@metadata][target] {
+    elasticsearch {
+      hosts => ["http://127.0.0.1:9200"]
+      user => "otus_logstash"
+      password => "{{ logstash_password }}"
+      index => "%{[@metadata][target]}"
+      manage_template => false
+      ilm_enabled => false
+      data_stream => false
+    }
+  }
+}

@@ -1,0 +1,7 @@
+server.host: "{{ logs_address }}"
+server.port: {{ kibana_port }}
+elasticsearch.hosts: ["http://127.0.0.1:9200"]
+elasticsearch.username: kibana_system
+elasticsearch.password: "{{ kibana_password }}"
+xpack.security.encryptionKey: "{{ kibana_key }}"
+telemetry.enabled: false

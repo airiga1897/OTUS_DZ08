@@ -1,0 +1,17 @@
+wordpress_version: '6.9.11'
+wp_cli_version: '2.12.0'
+kafka_version: '4.1.2'
+kafka_sha512: '78ac6e488b1071122f9608dfdb363f6fe50e1dbbc492347002c0398dfbf77e0d8caa5bf794c5937379721004dfe92025937d238b0faf4eb715529417fd43b491'
+elastic_version: '8.19.14'
+elastic_deb_versions:
+  logstash: '1:{{ elastic_version }}-1'
+kafka_heap: '512m'
+elasticsearch_heap: '2g'
+logstash_heap: '1g'
+elastic_mirror: 'https://mirror.yandex.ru/mirrors/elastic/8'
+# SHA-512 values published by Elastic for the pinned Debian release.
+elastic_sha512:
+  elasticsearch: 'f668afe66fbec6b22abae28796d91003593ec1d20ddaa847eb54e5f3a75d4416cd230fb58d4b7518fb529254ae7f43480834625861ff32bb9fe41ab48c14307a'
+  logstash: '39f14ced4f0973c12921371325df1629a0d270328718ecd31b33058067045ceee94c62d217296c63104e39d2036798934d989a3a951dc8dbdab1b9e2593aee16'
+  kibana: '08ac808fe507549878f14c65e725adabc8f7687103aa02c816700492bee55e1a49b55be1937bb38e895910aa36ba7859377542341765d67be50ef015c011c0e1'
+  filebeat: '28a2b415f49b1c4bd8a9521b1bf2c4339b3eae2b0be2d9bedf65a3522e4866720bc0921756d4a88d16e6338ed401b5efec5bc9e5221d2aa58cdf34331bdfc65c'

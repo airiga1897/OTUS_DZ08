@@ -1,0 +1,16 @@
+[Unit]
+Description=OTUS Kafka broker %i
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=kafka
+Group=kafka
+Environment="KAFKA_HEAP_OPTS=-Xms{{ kafka_heap }} -Xmx{{ kafka_heap }}"
+Environment="LOG_DIR=/var/log/otus-kafka/%i"
+ExecStart=/opt/kafka_2.13-{{ kafka_version }}/bin/kafka-server-start.sh /etc/otus-kafka/%i.properties
+Restart=on-failure
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

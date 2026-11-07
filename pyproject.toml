@@ -1,0 +1,9 @@
+[project]
+name = "otus-dz08"
+version = "0.1.0"
+description = "WordPress, Kafka and Elastic Stack on Yandex Cloud"
+requires-python = ">=3.12,<3.15"
+dependencies = []
+
+[tool.poetry]
+package-mode = false

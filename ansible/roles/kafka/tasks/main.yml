@@ -1,0 +1,118 @@
+- name: Install Java
+  ansible.builtin.apt:
+    name: openjdk-21-jre-headless
+    update_cache: true
+    cache_valid_time: 1800
+    lock_timeout: 120
+
+- name: Create Kafka system user
+  ansible.builtin.user:
+    name: kafka
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+
+- name: Download Kafka binary distribution
+  ansible.builtin.get_url:
+    url: "https://archive.apache.org/dist/kafka/{{ kafka_version }}/kafka_2.13-{{ kafka_version }}.tgz"
+    dest: "/opt/kafka-{{ kafka_version }}.tgz"
+    checksum: "sha512:{{ kafka_sha512 }}"
+    mode: '0644'
+
+- name: Unpack Kafka distribution
+  ansible.builtin.unarchive:
+    src: "/opt/kafka-{{ kafka_version }}.tgz"
+    dest: /opt
+    remote_src: true
+    creates: "/opt/kafka_2.13-{{ kafka_version }}/bin/kafka-server-start.sh"
+
+- name: Create Kafka directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: kafka
+    group: kafka
+    mode: '0750'
+  loop:
+    - /etc/otus-kafka
+    - /var/lib/otus-kafka
+    - /var/lib/otus-kafka/1
+    - /var/lib/otus-kafka/2
+    - /var/log/otus-kafka
+    - /var/log/otus-kafka/1
+    - /var/log/otus-kafka/2
+
+- name: Configure broker instances
+  ansible.builtin.template:
+    src: broker.properties.j2
+    dest: "/etc/otus-kafka/{{ item }}.properties"
+    owner: root
+    group: kafka
+    mode: '0640'
+  loop: [1, 2]
+  register: kafka_settings
+
+- name: Install Kafka systemd unit
+  ansible.builtin.template:
+    src: kafka.service.j2
+    dest: /etc/systemd/system/otus-kafka@.service
+    mode: '0644'
+  register: kafka_unit
+
+- name: Initialize the Kafka storage once
+  ansible.builtin.command:
+    argv:
+      - "/opt/kafka_2.13-{{ kafka_version }}/bin/kafka-storage.sh"
+      - format
+      - "--cluster-id"
+      - "{{ kafka_cluster_id }}"
+      - "--config"
+      - "/etc/otus-kafka/{{ item }}.properties"
+      - "{{ '--standalone' if item == 1 else '--no-initial-controllers' }}"
+    creates: "/var/lib/otus-kafka/{{ item }}/meta.properties"
+  environment:
+    KAFKA_HEAP_OPTS: "-Xms128m -Xmx256m"
+  loop: [1, 2]
+
+- name: Keep Kafka data owned by the service
+  ansible.builtin.file:
+    path: /var/lib/otus-kafka
+    owner: kafka
+    group: kafka
+    recurse: true
+    state: directory
+
+- name: Start Kafka brokers
+  ansible.builtin.systemd_service:
+    name: "otus-kafka@{{ item }}"
+    enabled: true
+    daemon_reload: true
+    state: "{{ 'restarted' if kafka_settings.changed or kafka_unit.changed else 'started' }}"
+  loop: [1, 2]
+
+- name: Create the two log topics
+  ansible.builtin.command:
+    argv:
+      - "/opt/kafka_2.13-{{ kafka_version }}/bin/kafka-topics.sh"
+      - --bootstrap-server
+      - "{{ logs_address }}:9092,{{ logs_address }}:9093"
+      - --create
+      - --if-not-exists
+      - --topic
+      - "{{ item }}"
+      - --partitions
+      - '2'
+      - --replication-factor
+      - '2'
+      - --config
+      - retention.bytes=134217728
+      - --config
+      - retention.ms=86400000
+  environment:
+    KAFKA_HEAP_OPTS: "-Xms128m -Xmx256m"
+  loop: [nginx, wordpress]
+  register: kafka_topic
+  until: kafka_topic.rc == 0
+  retries: 15
+  delay: 5
+  changed_when: "'Created topic' in kafka_topic.stdout"

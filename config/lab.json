@@ -1,0 +1,14 @@
+{
+  "zones": ["ru-central1-a", "ru-central1-b", "ru-central1-d"],
+  "subnets": ["10.84.8.0/24", "10.84.9.0/24"],
+  "platform": "standard-v3",
+  "image_family": "ubuntu-2404-lts",
+  "disk_type": "network-hdd",
+  "nodes": {
+    "portal": {"cores": 2, "memory": 4, "disk": 20},
+    "logs": {"cores": 2, "memory": 12, "disk": 20}
+  },
+  "wordpress_port": 8080,
+  "kibana_port": 5601,
+  "admin_cidrs": []
+}

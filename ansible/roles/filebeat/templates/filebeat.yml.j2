@@ -1,0 +1,33 @@
+filebeat.inputs:
+  - type: filestream
+    id: otus-nginx
+    paths: ["/var/log/nginx/otus-access.log*"]
+    prospector.scanner.exclude_files: ['\.gz$']
+    file_identity.native: ~
+    parsers:
+      - ndjson:
+          target: "otus"
+          add_error_key: true
+    fields:
+      topic: nginx
+  - type: filestream
+    id: otus-wordpress
+    paths: ["/var/log/wordpress/requests.log*"]
+    prospector.scanner.exclude_files: ['\.gz$']
+    file_identity.native: ~
+    parsers:
+      - ndjson:
+          target: "otus"
+          add_error_key: true
+    fields:
+      topic: wordpress
+
+output.kafka:
+  hosts: ["{{ logs_address }}:9092", "{{ logs_address }}:9093"]
+  topic: '%{[fields.topic]}'
+  required_acks: -1
+  compression: gzip
+
+queue.disk:
+  max_size: 256MB
+logging.level: info

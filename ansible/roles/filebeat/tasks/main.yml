@@ -1,0 +1,26 @@
+- name: Install Filebeat package
+  ansible.builtin.include_role:
+    name: elastic_package
+  vars:
+    elastic_package: filebeat
+
+- name: Configure portal log collection
+  ansible.builtin.template:
+    src: filebeat.yml.j2
+    dest: /etc/filebeat/filebeat.yml
+    owner: root
+    group: root
+    mode: '0600'
+  register: beat_config
+  when: inventory_hostname == 'portal'
+
+- name: Validate Filebeat configuration
+  ansible.builtin.command: filebeat test config
+  changed_when: false
+  when: inventory_hostname == 'portal'
+
+- name: Apply Filebeat service state
+  ansible.builtin.systemd_service:
+    name: filebeat
+    enabled: "{{ inventory_hostname == 'portal' }}"
+    state: "{{ ('restarted' if beat_config.changed else 'started') if inventory_hostname == 'portal' else 'stopped' }}"
