@@ -30,7 +30,7 @@ class Cloud:
         self.folder = os.environ.get("YC_FOLDER_ID")
         self.token = os.environ.get("YC_TOKEN")
         if not all((self.cloud, self.folder, self.token)):
-            raise ValueError("Run env.ps1 to set YC_CLOUD_ID, YC_FOLDER_ID and YC_TOKEN.")
+            raise ValueError("Set YC_CLOUD_ID, YC_FOLDER_ID and YC_TOKEN using the yc commands in README.md.")
 
     def get(self, base, path, *, missing_ok=False, **query):
         url = f"{base}/{path}?{urlencode(query)}"
