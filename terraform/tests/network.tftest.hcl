@@ -5,6 +5,7 @@ mock_provider "yandex" {
 }
 
 variables {
+  ip_probe_zip   = "../functions/ip_probe.py"
   cloud_id       = "mock-cloud"
   folder_id      = "mock-folder"
   name           = "otus-dz08-test"
@@ -71,4 +72,26 @@ run "two_nodes_two_zones" {
     )
     error_message = "Each node needs a subnet in its zone and both subnets must use one VPC."
   }
+}
+
+run "probe_before_admin_address" {
+  command = plan
+  plan_options {
+    target = [yandex_function.ip_probe]
+  }
+  variables {
+    admin_cidrs = []
+  }
+  assert {
+    condition     = yandex_function.ip_probe.runtime == "python312" && yandex_function.ip_probe.entrypoint == "index.handler"
+    error_message = "The probe must be deployable before observing the operator address."
+  }
+}
+
+run "reject_full_plan_without_admin_address" {
+  command = plan
+  variables {
+    admin_cidrs = []
+  }
+  expect_failures = [yandex_vpc_security_group.portal]
 }

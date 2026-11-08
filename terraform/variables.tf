@@ -34,7 +34,7 @@ variable "admin_cidrs" {
   type = list(string)
 
   validation {
-    condition = length(var.admin_cidrs) > 0 && alltrue([
+    condition = alltrue([
       for cidr in var.admin_cidrs : can(cidrnetmask(cidr)) && endswith(cidr, "/32")
     ])
     error_message = "Administrative access requires individual IPv4 /32 addresses."
@@ -68,4 +68,9 @@ output "nodes" {
       public  = node.network_interface[0].nat_ip_address
     }
   }
+}
+
+
+variable "ip_probe_zip" {
+  type = string
 }

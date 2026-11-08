@@ -173,7 +173,8 @@ class StateTest(TestCase):
             lab = Lab(Path(path) / ".local")
             with self.assertRaisesRegex(RuntimeError, rf"уже есть стенд ДЗ08 \({stand}\)"):
                 lab.deploy()
-            resources.assert_called_once_with("yandex_vpc_network")
+            self.assertEqual([call.args[0] for call in resources.call_args_list],
+                             ["yandex_vpc_network", "yandex_function"])
             catalog.assert_not_called()
             self.assertFalse(lab.context.exists())
 

@@ -3,12 +3,12 @@ from contextlib import contextmanager
 from ipaddress import IPv4Address, IPv4Network
 from pathlib import Path
 from shutil import which
-from urllib.request import urlopen
 from hashlib import file_digest
 import csv
 import json
 import os
 import subprocess
+from zipfile import ZipFile, ZipInfo
 
 from yc import TYPES
 
@@ -44,26 +44,18 @@ def read(path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def public_ipv4():
-    addresses = []
-    for url in ("https://api.ipify.org", "https://checkip.amazonaws.com"):
-        with urlopen(url, timeout=10) as response:
-            addresses.append(IPv4Address(response.read(80).decode().strip()))
-    if addresses[0] != addresses[1] or not addresses[0].is_global:
-        raise ValueError("The two HTTPS checks did not confirm the same public IPv4.")
-    return addresses[0]
-
-
-def admin_access(configured):
-    address = public_ipv4()
-    if not configured:
-        return [f"{address}/32"]
+def admin_access(configured, address=None):
     networks = [IPv4Network(cidr) for cidr in configured]
-    if any(net.prefixlen != 32 or not net.network_address.is_global for net in networks):
-        raise ValueError("admin_cidrs must contain only public IPv4 /32 entries.")
-    if not any(address in net for net in networks):
-        raise ValueError("The confirmed IPv4 is absent from admin_cidrs.")
-    return [str(net) for net in networks]
+    if any(net.prefixlen != 32 or not net.network_address.is_global
+           or net.network_address.is_multicast for net in networks):
+        raise ValueError("admin_cidrs должны содержать только публичные IPv4 /32.")
+    result = [str(net) for net in networks]
+    if address is not None:
+        ip = IPv4Address(address)
+        if not ip.is_global or ip.is_multicast:
+            raise ValueError("YC вернул непубличный IPv4.")
+        result.append(f"{ip}/32")
+    return list(dict.fromkeys(result))
 
 
 def protect(directory):
@@ -114,14 +106,33 @@ class Terraform:
         self.call("init", "-input=false", "-lockfile=readonly", "-reconfigure",
                   f"-backend-config=path={self.state.resolve()}", *source)
 
-    def plan_apply(self, *, token, destroy=False):
+    def prepare_probe(self):
+        path = self.local / "ip-probe.zip"
+        with ZipFile(path, "w") as archive:
+            archive.writestr(ZipInfo("index.py"), (ROOT / "functions/ip_probe.py").read_bytes())
+        return path.resolve().as_posix()
+
+    def probe_id(self, context):
+        owned = self.resources(context)
+        identifiers = [identifier for kind, identifier in owned if kind == "yandex_function"]
+        if len(identifiers) != 1:
+            raise RuntimeError("В state должна быть одна функция определения IP.")
+        return identifiers[0]
+
+    def plan_apply(self, *, token, destroy=False, probe_only=False):
+        if destroy and probe_only:
+            raise ValueError("Нельзя совместить удаление и подготовку функции.")
         mode = ["-destroy"] if destroy else []
+        if probe_only:
+            mode.append("-target=yandex_function.ip_probe")
         self.call("plan", *mode, "-input=false",
                   f"-var-file={self.local / 'terraform.tfvars.json'}", f"-out={self.plan}", token=token)
         data = json.loads(self.call("show", "-json", str(self.plan), capture=True))
         allowed = {("no-op",), ("delete",) if destroy else ("create",)}
         for change in data.get("resource_changes", []):
             actions = tuple(change["change"]["actions"])
+            if probe_only and actions != ("no-op",) and change["address"] != "yandex_function.ip_probe":
+                raise RuntimeError("Подготовка IP-функции затрагивает другие ресурсы.")
             if change["type"] in TYPES and actions in allowed:
                 continue
             if not destroy and self.portal_ingress_update(change):

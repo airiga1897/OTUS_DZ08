@@ -44,6 +44,13 @@ resource "yandex_vpc_subnet" "lab" {
 }
 
 resource "yandex_vpc_security_group" "portal" {
+  lifecycle {
+    precondition {
+      condition     = length(var.admin_cidrs) > 0
+      error_message = "Получите подтверждённый IPv4 через функцию YC до создания правил доступа."
+    }
+  }
+
   name       = "${var.name}-portal"
   network_id = yandex_vpc_network.lab.id
 
@@ -133,5 +140,25 @@ resource "yandex_compute_instance" "lab" {
 
   metadata = {
     ssh-keys = "ubuntu:${each.key == "logs" ? var.logs_keys : var.portal_key}"
+  }
+}
+
+
+resource "yandex_function" "ip_probe" {
+  name              = "${var.name}-ip-probe"
+  folder_id         = var.folder_id
+  labels            = { otus_lab = var.name }
+  runtime           = "python312"
+  entrypoint        = "index.handler"
+  memory            = 128
+  execution_timeout = 5
+  user_hash         = filesha256(var.ip_probe_zip)
+
+  content {
+    zip_filename = var.ip_probe_zip
+  }
+
+  log_options {
+    disabled = true
   }
 }

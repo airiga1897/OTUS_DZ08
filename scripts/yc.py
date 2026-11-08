@@ -1,10 +1,13 @@
-"""Read-only Yandex Cloud API and deterministic placement."""
+"""Yandex Cloud inventory, authenticated IP probe and placement."""
 from collections import defaultdict
 from ipaddress import IPv4Network, ip_network
 from itertools import product
 from pathlib import Path
 import json
 import re
+import time
+from uuid import uuid4
+from ipaddress import IPv4Address
 from shutil import which
 import subprocess
 from urllib.error import HTTPError, URLError
@@ -16,7 +19,9 @@ COMPUTE = "https://compute.api.cloud.yandex.net/compute/v1"
 VPC = "https://vpc.api.cloud.yandex.net/vpc/v1"
 QUOTA = "https://quota-manager.api.cloud.yandex.net/quota-manager/v1"
 IAM_RESOURCES = "https://resource-manager.api.cloud.yandex.net/resource-manager/v1"
+FUNCTIONS = "https://serverless-functions.api.cloud.yandex.net/functions/v1"
 TYPES = {
+    "yandex_function": (FUNCTIONS, "functions"),
     "yandex_compute_instance": (COMPUTE, "instances"),
     "disk": (COMPUTE, "disks"),
     "yandex_vpc_network": (VPC, "networks"),
@@ -83,10 +88,41 @@ class Cloud:
         return self.pages(base, path, path, folderId=self.folder)
 
     def lab_names(self):
-        return sorted({
-            item["name"] for item in self.resources("yandex_vpc_network")
-            if re.fullmatch(r"otus-dz08-[0-9a-f]{16}", item["name"])
-        })
+        names = set()
+        for kind in ("yandex_vpc_network", "yandex_function"):
+            for item in self.resources(kind):
+                match = re.fullmatch(r"(otus-dz08-[0-9a-f]{16})(?:-ip-probe)?", item["name"])
+                if match:
+                    names.add(match[1])
+        return sorted(names)
+
+    def public_ipv4(self, function_id):
+        if not re.fullmatch(r"[a-z0-9]+", function_id):
+            raise ValueError("Некорректный ID функции YC.")
+        nonce = uuid4().hex
+        request = Request(
+            f"https://functions.yandexcloud.net/{function_id}?nonce={nonce}",
+            headers={"Authorization": f"Bearer {self.token}"},
+        )
+        for attempt in range(3):
+            try:
+                with urlopen(request, timeout=20) as response:
+                    result = json.loads(response.read(4096))
+                if result.get("nonce") != nonce:
+                    raise ValueError("Ответ функции YC не соответствует текущему запросу.")
+                address = IPv4Address(result["ip"])
+                if not address.is_global or address.is_multicast:
+                    raise ValueError("Функция YC вернула непубличный IPv4.")
+                return str(address)
+            except HTTPError as error:
+                error.close()
+                if error.code not in (429, 502, 503, 504):
+                    raise RuntimeError(f"Функция определения IP YC: HTTP {error.code}.") from error
+            except (URLError, TimeoutError):
+                pass
+            if attempt < 2:
+                time.sleep(2)
+        raise RuntimeError("Не удалось получить IP через YC. Повторите deploy; state сохранён.")
 
     def inventory(self, prefix):
         return {

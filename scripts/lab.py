@@ -57,7 +57,7 @@ class Lab:
         if any(node["disk"] * GIB < int(image["minDiskSize"])
                for node in self.policy["nodes"].values()):
             raise RuntimeError("A configured boot disk is smaller than the Ubuntu image minimum.")
-        cidrs = self.confirm_admin_access()
+        cidrs = self.configured_admin_access()
         nodes = choose(self.policy, zones, used, cloud.quota())
         context = {
             "provider": "yc", "cloud": cloud.cloud, "folder": cloud.folder,
@@ -72,10 +72,25 @@ class Lab:
         save(self.context, context)
         return context
 
-    def confirm_admin_access(self, saved=()):
+    def configured_admin_access(self, saved=()):
         access_file = ROOT / "config/lab.local.json"
         configured = (read(access_file) if access_file.exists() else self.policy)["admin_cidrs"]
-        return admin_access(list(dict.fromkeys([*saved, *configured])))
+        return admin_access([*saved, *configured])
+
+    def confirm_admin_access(self, cloud, context):
+        previous = self.configured_admin_access(context["admin_cidrs"])
+        address = cloud.public_ipv4(self.tf.probe_id(context))
+        history_path = ROOT / ".tools/admin-cidrs.json"
+        scope = f"{cloud.cloud}/{cloud.folder}"
+        with locked(ROOT / ".tools/admin-access"):
+            history = read(history_path) if history_path.exists() else {}
+            observed = admin_access(history.get(scope, []), address)
+            history[scope] = observed
+            save(history_path, history)
+        context["admin_cidrs"] = admin_access([*previous, *observed])
+        context["observed_admin_cidrs"] = observed
+        save(self.context, context)
+        LOG.info("YC подтвердил IPv4 %s; разрешённые /32 сохранены.", address)
 
     def key(self, name):
         key = self.local / name
@@ -88,10 +103,11 @@ class Lab:
             "name", "nodes", "admin_cidrs", "platform", "disk_type", "image_id",
             "wordpress_port", "kibana_port",
         )}
+        probe_zip = self.tf.prepare_probe()
         if self.variables.exists():
             previous = read(self.variables)
             updated = dict(previous, wordpress_port=settings["wordpress_port"],
-                           admin_cidrs=settings["admin_cidrs"])
+                           admin_cidrs=settings["admin_cidrs"], ip_probe_zip=probe_zip)
             if previous != updated:
                 save(self.variables, updated)
             return
@@ -99,7 +115,7 @@ class Lab:
         internal = self.key("ansible")
         save(self.variables, {
             "cloud_id": context["cloud"], "folder_id": context["folder"],
-            **settings,
+            **settings, "ip_probe_zip": probe_zip,
             "portal_key": operator, "logs_keys": f"{operator}\nubuntu:{internal}",
         })
 
@@ -109,7 +125,7 @@ class Lab:
         cloud.confirm_folder()
         if self.context.exists():
             context = self.cloud_context(cloud)
-            context["admin_cidrs"] = self.confirm_admin_access(context["admin_cidrs"])
+            context["admin_cidrs"] = self.configured_admin_access(context["admin_cidrs"])
         else:
             context = self.new_context(cloud)
         existing = self.tf.resources(context)
@@ -121,6 +137,14 @@ class Lab:
             LOG.info("Продолжаем работу с существующим стендом ДЗ08 %s.", context["name"])
         self.prepare_variables(context)
         self.tf.init()
+        if not any(kind == "yandex_function" for kind, _ in existing):
+            self.tf.plan_apply(token=cloud.token, probe_only=True)
+            context["lineage"] = read(self.tf.state)["lineage"]
+            save(self.context, context)
+            if cloud.inventory(context["name"]) != self.tf.resources(context):
+                raise RuntimeError("Ресурсы YC не соответствуют state после подготовки функции.")
+        self.confirm_admin_access(cloud, context)
+        self.prepare_variables(context)
         self.tf.plan_apply(token=cloud.token)
         context["lineage"] = read(self.tf.state)["lineage"]
         save(self.context, context)
