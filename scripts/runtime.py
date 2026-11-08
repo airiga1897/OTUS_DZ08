@@ -88,6 +88,7 @@ class Terraform:
     def call(self, *args, capture=False, token=None):
         env = dict(os.environ, TF_DATA_DIR=str(self.local / "terraform-data"),
                    TF_IN_AUTOMATION="true", TF_INPUT="false")
+        env.setdefault("TF_CLI_CONFIG_FILE", str(ROOT / "terraform/terraform.rc"))
         if token is not None:
             env["YC_TOKEN"] = token
         bundled = ROOT / ".tools/bin/terraform.exe"
