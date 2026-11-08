@@ -1,0 +1,17 @@
+process.roles={{ 'broker,controller' if item == 1 else 'broker' }}
+node.id={{ item }}
+controller.quorum.bootstrap.servers=127.0.0.1:9094
+controller.listener.names=CONTROLLER
+listener.security.protocol.map=DATA:PLAINTEXT,CONTROLLER:PLAINTEXT
+inter.broker.listener.name=DATA
+listeners=DATA://{{ logs_address }}:{{ 9091 + item }}{{ ',CONTROLLER://127.0.0.1:9094' if item == 1 else '' }}
+advertised.listeners=DATA://{{ logs_address }}:{{ 9091 + item }}
+log.dirs=/var/lib/otus-kafka/{{ item }}
+num.partitions=2
+default.replication.factor=2
+min.insync.replicas=2
+offsets.topic.replication.factor=2
+transaction.state.log.replication.factor=2
+transaction.state.log.min.isr=2
+auto.create.topics.enable=false
+log.segment.bytes=33554432

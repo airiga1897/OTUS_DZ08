@@ -1,0 +1,25 @@
+- name: Configure log pipeline
+  hosts: logs
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Wait for cloud initialization
+      ansible.builtin.command: cloud-init status --wait
+      changed_when: false
+  roles:
+    - kafka
+    - elastic
+
+- name: Configure portal
+  hosts: portal
+  become: true
+  gather_facts: false
+  roles:
+    - wordpress
+
+- name: Install agents
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - filebeat

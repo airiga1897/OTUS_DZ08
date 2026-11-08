@@ -1,0 +1,44 @@
+map $http_x_otus_check $otus_marker {
+    default "";
+    "~^[a-f0-9]{32}$" $http_x_otus_check;
+}
+
+log_format otus escape=json
+    '{"event":"http_access","method":"$request_method","status":$status,"marker":"$otus_marker"}';
+
+server {
+    listen {{ wordpress_port }};
+    server_name {{ portal_public_address }};
+    root /var/www/otus;
+    index index.php;
+    access_log /var/log/nginx/otus-access.log otus;
+
+    location / { try_files $uri $uri/ /index.php?$args; }
+    location = /wp-config.php { deny all; }
+    location ~ /\. { deny all; }
+    location ~ ^/wp-content/uploads/.*\.php$ { deny all; }
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+    }
+}
+
+server {
+    listen {{ kibana_port }} ssl;
+    server_name {{ portal_public_address }};
+    ssl_certificate /etc/otus-tls/server.crt;
+    ssl_certificate_key /etc/otus-tls/server.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    access_log off;
+
+    location / {
+        proxy_pass https://{{ logs_address }}:{{ kibana_port }};
+        proxy_ssl_name kibana.internal;
+        proxy_ssl_server_name on;
+        proxy_ssl_trusted_certificate /etc/otus-tls/kibana.crt;
+        proxy_ssl_verify on;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}

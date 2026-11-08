@@ -1,0 +1,38 @@
+- name: Read the installed package version
+  ansible.builtin.command:
+    argv: [dpkg-query, --show, "--showformat=${Status} ${Version}", "{{ elastic_package }}"]
+  register: installed_package
+  changed_when: false
+  failed_when: installed_package.rc not in [0, 1]
+
+- name: Install the pinned package when needed
+  when: installed_package.stdout != 'install ok installed ' + elastic_deb_versions.get(elastic_package, elastic_version)
+  block:
+    - name: Download the mirrored package and verify the publisher checksum
+      ansible.builtin.get_url:
+        url: "{{ elastic_mirror }}/pool/main/{{ elastic_package[0] }}/{{ elastic_package }}/{{ elastic_package }}-{{ elastic_version }}-amd64.deb"
+        dest: "/var/cache/{{ elastic_package }}-{{ elastic_version }}.deb"
+        checksum: "sha512:{{ elastic_sha512[elastic_package] }}"
+        timeout: 60
+        mode: '0644'
+
+    - name: Install the pinned Elastic package
+      ansible.builtin.command:
+        argv:
+          - apt-get
+          - -o
+          - DPkg::Lock::Timeout=180
+          - -o
+          - Dpkg::Options::=--force-confdef
+          - -o
+          - Dpkg::Options::=--force-confold
+          - -y
+          - install
+          - "/var/cache/{{ elastic_package }}-{{ elastic_version }}.deb"
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+
+    - name: Remove package archive after installation
+      ansible.builtin.file:
+        path: "/var/cache/{{ elastic_package }}-{{ elastic_version }}.deb"
+        state: absent

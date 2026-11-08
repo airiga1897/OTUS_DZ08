@@ -1,0 +1,17 @@
+.venv/
+.local/
+.local-test/
+.tools/
+/.env
+/.env.*
+/config/lab.local.json
+__pycache__/
+*.py[cod]
+.terraform/
+*.tfstate*
+*.tfplan
+*.tfvars
+*.tfvars.json
+*.pem
+*.key
+*.log

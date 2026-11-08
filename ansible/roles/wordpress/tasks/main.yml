@@ -1,0 +1,209 @@
+- name: Install portal dependencies
+  ansible.builtin.apt:
+    name:
+      - nginx
+      - curl
+      - mariadb-server
+      - php8.3-fpm
+      - php8.3-cli
+      - php8.3-mysql
+      - php8.3-xml
+      - php8.3-curl
+      - php8.3-mbstring
+      - php8.3-zip
+    update_cache: true
+    cache_valid_time: 1800
+    lock_timeout: 120
+
+- name: Start MariaDB and PHP
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop: [mariadb, php8.3-fpm]
+
+- name: Install WP-CLI
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../wp-cli.phar"
+    dest: /usr/local/bin/wp
+    owner: root
+    mode: '0755'
+
+- name: Create portal directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    mode: '0755'
+  loop:
+    - /var/www/otus
+    - /usr/local/lib/otus-dz08
+
+- name: Download the pinned WordPress release
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/wp
+      - --allow-root
+      - --path=/var/www/otus
+      - core
+      - download
+      - "--version={{ wordpress_version }}"
+      - --skip-content
+    creates: /var/www/otus/wp-settings.php
+
+- name: Verify WordPress core checksums
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/wp
+      - --allow-root
+      - --path=/var/www/otus
+      - core
+      - verify-checksums
+      - "--version={{ wordpress_version }}"
+  changed_when: false
+
+- name: Ensure the local database and application user
+  ansible.builtin.command:
+    argv: [mariadb]
+    stdin: |
+      CREATE DATABASE IF NOT EXISTS otus CHARACTER SET utf8mb4;
+      CREATE USER IF NOT EXISTS 'otus'@'localhost' IDENTIFIED BY '{{ wordpress_db }}';
+      GRANT ALL ON otus.* TO 'otus'@'localhost';
+  changed_when: false
+  no_log: true
+
+- name: Write WordPress configuration
+  ansible.builtin.template:
+    src: wp-config.php.j2
+    dest: /var/www/otus/wp-config.php
+    owner: root
+    group: www-data
+    mode: '0640'
+  no_log: true
+
+- name: Create WordPress application directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    mode: '0755'
+  loop:
+    - /var/www/otus/wp-content/mu-plugins
+    - /var/www/otus/wp-content/themes/otus
+
+- name: Create WordPress log directory
+  ansible.builtin.file:
+    path: /var/log/wordpress
+    owner: www-data
+    group: adm
+    state: directory
+    mode: '0750'
+
+- name: Install portal theme and application logger
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    mode: '0644'
+  loop:
+    - {src: otus-log.php, dest: /var/www/otus/wp-content/mu-plugins/otus-log.php}
+    - {src: index.php, dest: /var/www/otus/wp-content/themes/otus/index.php}
+    - {src: style.css, dest: /var/www/otus/wp-content/themes/otus/style.css}
+    - {src: wordpress.logrotate, dest: /etc/logrotate.d/otus-wordpress}
+
+- name: Inspect WordPress installation
+  ansible.builtin.command: wp --allow-root --path=/var/www/otus core is-installed
+  register: wp_installed
+  changed_when: false
+  failed_when: wp_installed.rc not in [0, 1]
+
+- name: Initialize WordPress
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/wp
+      - --allow-root
+      - --path=/var/www/otus
+      - core
+      - install
+      - "--url=http://{{ portal_public_address }}:{{ wordpress_port }}"
+      - --title=OTUS
+      - --admin_user=otus-admin
+      - --admin_email=admin@example.invalid
+      - --skip-email
+      - --prompt=admin_password
+    stdin: "{{ wordpress_admin }}"
+  when: wp_installed.rc == 1
+  no_log: true
+
+- name: Activate the portal theme
+  ansible.builtin.command: wp --allow-root --path=/var/www/otus theme activate otus
+  register: wp_theme
+  changed_when: "'Success: Switched' in wp_theme.stdout"
+
+- name: Configure original article paths
+  ansible.builtin.command:
+    argv: [wp, --allow-root, --path=/var/www/otus, rewrite, structure, '/articles/%postname%/']
+  register: wp_rewrite
+  changed_when: "'Success: Rewrite structure set' in wp_rewrite.stdout"
+
+- name: Install the WXR and importer
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "/usr/local/lib/otus-dz08/{{ item.dest }}"
+    owner: root
+    mode: "{{ item.mode }}"
+  loop:
+    - {src: "{{ playbook_dir }}/../portal/materials.xml", dest: materials.xml, mode: '0644'}
+    - {src: import-content.py, dest: import-content, mode: '0750'}
+
+- name: Configure TLS for the public Kibana proxy
+  ansible.builtin.include_role:
+    name: lab_tls
+  vars:
+    tls_group: root
+    tls_name: portal.internal
+    tls_address: "{{ portal_public_address }}"
+
+- name: Read the private Kibana server certificate
+  ansible.builtin.slurp:
+    src: /etc/otus-tls/server.crt
+  delegate_to: logs
+  register: kibana_certificate
+
+- name: Trust the private Kibana server certificate
+  ansible.builtin.copy:
+    content: "{{ kibana_certificate.content | b64decode }}"
+    dest: /etc/otus-tls/kibana.crt
+    owner: root
+    mode: '0644'
+  register: nginx_trust
+
+- name: Install Nginx configuration
+  ansible.builtin.template:
+    src: nginx.conf.j2
+    dest: /etc/nginx/sites-available/otus
+    mode: '0644'
+  register: nginx_config
+
+- name: Remove default public site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  register: nginx_default
+
+- name: Enable portal and Kibana proxy
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/otus
+    dest: /etc/nginx/sites-enabled/otus
+    state: link
+  register: nginx_site
+
+- name: Validate Nginx configuration
+  ansible.builtin.command: nginx -t
+  changed_when: false
+
+- name: Start Nginx
+  ansible.builtin.systemd_service:
+    name: nginx
+    enabled: true
+    state: "{{ 'restarted' if nginx_config.changed or nginx_default.changed or nginx_site.changed or
+                tls_certificate.changed or nginx_trust.changed else 'started' }}"

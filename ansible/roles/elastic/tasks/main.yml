@@ -1,0 +1,148 @@
+- name: Install Elastic Stack
+  ansible.builtin.include_role:
+    name: elastic_package
+  vars:
+    elastic_package: "{{ item }}"
+  loop: [elasticsearch, logstash, kibana]
+
+- name: Configure Elasticsearch
+  ansible.builtin.template:
+    src: elasticsearch.yml.j2
+    dest: /etc/elasticsearch/elasticsearch.yml
+    owner: root
+    group: elasticsearch
+    mode: '0640'
+  register: es_config
+
+- name: Set the Elasticsearch heap
+  ansible.builtin.copy:
+    dest: /etc/elasticsearch/jvm.options.d/otus.options
+    content: |
+      -Xms{{ elasticsearch_heap }}
+      -Xmx{{ elasticsearch_heap }}
+    mode: '0644'
+  register: es_heap
+
+- name: Establish the bootstrap password once
+  ansible.builtin.shell:
+    cmd: |
+      set -eu
+      printf '%s\n' "$BOOTSTRAP" | /usr/share/elasticsearch/bin/elasticsearch-keystore add -x -f bootstrap.password
+      touch /etc/elasticsearch/.otus-bootstrap
+    creates: /etc/elasticsearch/.otus-bootstrap
+  environment:
+    BOOTSTRAP: "{{ elastic_password }}"
+    ES_PATH_CONF: /etc/elasticsearch
+  no_log: true
+
+- name: Start Elasticsearch
+  ansible.builtin.systemd_service:
+    name: elasticsearch
+    enabled: true
+    state: "{{ 'restarted' if es_config.changed or es_heap.changed else 'started' }}"
+
+- name: Wait for Elasticsearch
+  ansible.builtin.uri:
+    url: http://127.0.0.1:9200/_cluster/health?wait_for_status=yellow&timeout=5s
+    url_username: elastic
+    url_password: "{{ elastic_password }}"
+    force_basic_auth: true
+  register: es_ready
+  until: es_ready.status == 200
+  retries: 30
+  delay: 5
+  no_log: true
+
+- name: Configure Elasticsearch users, permissions and indices
+  ansible.builtin.script: configure-elastic.py
+  environment:
+    ES_PASSWORD: "{{ elastic_password }}"
+    KIBANA_PASSWORD: "{{ kibana_password }}"
+    LOGSTASH_PASSWORD: "{{ logstash_password }}"
+  register: elastic_setup
+  changed_when: "'updated' in elastic_setup.stdout"
+  no_log: true
+
+- name: Configure Logstash
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: logstash
+    mode: '0640'
+  loop:
+    - {src: logstash.yml.j2, dest: /etc/logstash/logstash.yml}
+    - {src: pipeline.conf.j2, dest: /etc/logstash/conf.d/otus.conf}
+  register: logstash_config
+  no_log: true
+
+- name: Configure TLS for Kibana on the private network
+  ansible.builtin.include_role:
+    name: lab_tls
+  vars:
+    tls_group: kibana
+    tls_name: kibana.internal
+    tls_address: "{{ logs_address }}"
+
+- name: Configure Kibana
+  ansible.builtin.template:
+    src: kibana.yml.j2
+    dest: /etc/kibana/kibana.yml
+    owner: root
+    group: kibana
+    mode: '0640'
+  register: kibana_config
+  no_log: true
+
+- name: Create Logstash service configuration directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/logstash.service.d
+    state: directory
+    mode: '0755'
+
+- name: Set the Logstash heap
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/logstash.service.d/otus.conf
+    content: |
+      [Service]
+      Environment="LS_JAVA_OPTS=-Xms{{ logstash_heap }} -Xmx{{ logstash_heap }}"
+    mode: '0644'
+  register: logstash_jvm
+
+- name: Start Logstash
+  ansible.builtin.systemd_service:
+    name: logstash
+    enabled: true
+    daemon_reload: true
+    state: "{{ 'restarted' if logstash_config.changed or logstash_jvm.changed else 'started' }}"
+
+- name: Start Kibana
+  ansible.builtin.systemd_service:
+    name: kibana
+    enabled: true
+    state: "{{ 'restarted' if kibana_config.changed or tls_certificate.changed else 'started' }}"
+
+- name: Create verification directory
+  ansible.builtin.file:
+    path: /usr/local/lib/otus-dz08
+    state: directory
+    mode: '0755'
+
+- name: Install verification helper
+  ansible.builtin.copy:
+    src: verify.py
+    dest: /usr/local/lib/otus-dz08/verify
+    owner: root
+    mode: '0750'
+
+- name: Configure data views and save verification parameters
+  ansible.builtin.template:
+    src: verify.json.j2
+    dest: /etc/otus-verify.json
+    owner: root
+    mode: '0600'
+  no_log: true
+
+- name: Wait for Kibana and configure data views
+  ansible.builtin.command: /usr/local/lib/otus-dz08/verify setup
+  changed_when: false

@@ -1,0 +1,11 @@
+/var/log/wordpress/requests.log {
+    su www-data adm
+    daily
+    rotate 3
+    maxsize 20M
+    missingok
+    notifempty
+    delaycompress
+    compress
+    create 0640 www-data adm
+}
