@@ -54,6 +54,7 @@ class AuthorizationTest(TestCase):
             patch("yc.Path.is_file", return_value=False),
             patch("yc.which", return_value="yc"),
             patch("yc.subprocess.run", side_effect=subprocess.CalledProcessError(1, ["yc"])) as run,
+            patch("lab.wp_cli"),
             patch.object(Cloud, "confirm_folder") as api,
             patch.object(Terraform, "init") as init,
         ):
@@ -218,9 +219,16 @@ class StateTest(TestCase):
             after = dict(before, ingress=[{"port": 22}, {"port": 8080}, {"port": 5601}])
             resource = {"type": "yandex_vpc_security_group", "address": "yandex_vpc_security_group.portal",
                         "change": {"actions": ["update"], "before": before, "after": after}}
+            resource["change"]["after_unknown"] = {
+                "egress": [{"labels": {}, "v4_cidr_blocks": [False], "v6_cidr_blocks": []}],
+                "ingress": [{"id": True}],
+            }
             with patch.object(tf, "call", side_effect=[None, json.dumps({"resource_changes": [resource]}), None]) as call:
                 tf.plan_apply(token="profiletoken")
                 self.assertEqual(call.call_args.args[0], "apply")
+            resource["change"]["after_unknown"]["egress"][0]["v4_cidr_blocks"] = [True]
+            self.assertFalse(Terraform.portal_ingress_update(resource))
+            resource["change"]["after_unknown"]["egress"][0]["v4_cidr_blocks"] = [False]
             after["name"] = "unexpected"
             with patch.object(tf, "call", side_effect=[None, json.dumps({"resource_changes": [resource]})]) as call:
                 with self.assertRaisesRegex(RuntimeError, "Nothing was applied"):

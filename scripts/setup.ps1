@@ -89,6 +89,7 @@ function Install-LocalProvider {
     }
 }
 
+. (Join-Path $PSScriptRoot 'wp-cli.ps1')
 Push-Location (Join-Path $PSScriptRoot '..')
 try {
     if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
@@ -153,6 +154,7 @@ try {
         $env:POETRY_CACHE_DIR = $oldCache
         $env:POETRY_KEYRING_ENABLED = $oldKeyring
     }
+    Install-WpCli -Root $PWD
     if ($PrepareLocalProvider) { Install-LocalProvider -Architecture $architecture }
 } finally {
     Pop-Location

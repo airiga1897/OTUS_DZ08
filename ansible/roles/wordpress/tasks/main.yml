@@ -23,10 +23,10 @@
   loop: [mariadb, php8.3-fpm]
 
 - name: Install WP-CLI
-  ansible.builtin.get_url:
-    url: "https://github.com/wp-cli/wp-cli/releases/download/v{{ wp_cli_version }}/wp-cli-{{ wp_cli_version }}.phar"
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../wp-cli.phar"
     dest: /usr/local/bin/wp
-    checksum: "sha512:https://github.com/wp-cli/wp-cli/releases/download/v{{ wp_cli_version }}/wp-cli-{{ wp_cli_version }}.phar.sha512"
+    owner: root
     mode: '0755'
 
 - name: Create portal directories

@@ -12,7 +12,7 @@ import tarfile
 import time
 from uuid import uuid4
 
-from runtime import ROOT, read, run, save
+from runtime import ROOT, read, run, save, wp_cli
 
 
 class Remote:
@@ -107,6 +107,7 @@ class Remote:
                 archive.add(ROOT / directory, arcname=directory,
                             filter=lambda item: None if "__pycache__" in Path(item.name).parts else item)
             for source, name in (
+                (wp_cli(), "wp-cli.phar"),
                 (ROOT / "scripts/bootstrap.sh", "bootstrap.sh"),
                 (ROOT / "config/stack.yml", "stack.yml"),
                 (settings, "settings.json"),

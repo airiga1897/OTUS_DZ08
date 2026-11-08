@@ -11,7 +11,7 @@ import time
 from uuid import uuid4
 
 from remote import Remote
-from runtime import ROOT, Terraform, admin_access, locked, read, run, save
+from runtime import ROOT, Terraform, admin_access, locked, read, run, save, wp_cli
 from yc import Cloud, GIB, choose
 
 LOG = logging.getLogger(__name__)
@@ -104,6 +104,7 @@ class Lab:
         })
 
     def deploy(self):
+        wp_cli()
         cloud = Cloud()
         cloud.confirm_folder()
         if self.context.exists():

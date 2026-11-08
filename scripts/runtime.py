@@ -4,6 +4,7 @@ from ipaddress import IPv4Address, IPv4Network
 from pathlib import Path
 from shutil import which
 from urllib.request import urlopen
+from hashlib import file_digest
 import csv
 import json
 import os
@@ -12,6 +13,18 @@ import subprocess
 from yc import TYPES
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def wp_cli():
+    config = read(ROOT / "config/wp-cli.json")
+    path = ROOT / ".tools/wp-cli" / f"wp-cli-{config['version']}.phar"
+    if not path.is_file():
+        raise RuntimeError("WP-CLI отсутствует. Выполните .\\scripts\\setup.ps1.")
+    with path.open("rb") as source:
+        digest = file_digest(source, "sha512").hexdigest()
+    if digest != config["sha512"]:
+        raise RuntimeError("Контрольная сумма WP-CLI не совпадает. Выполните .\\scripts\\setup.ps1.")
+    return path
 
 
 def run(*args, capture=False, cwd=ROOT, timeout=1200, env=None):
@@ -88,7 +101,7 @@ class Terraform:
 
     def call(self, *args, capture=False, token=None):
         env = dict(os.environ, TF_DATA_DIR=str(self.local / "terraform-data"),
-                   TF_IN_AUTOMATION="true", TF_INPUT="false")
+                   TF_IN_AUTOMATION="true", TF_INPUT="false", TF_WORKSPACE="default")
         env.setdefault("TF_CLI_CONFIG_FILE", str(ROOT / "terraform/terraform.rc"))
         if token is not None:
             env["YC_TOKEN"] = token
@@ -98,11 +111,12 @@ class Terraform:
 
     def init(self):
         source = [f"-plugin-dir={self.plugin_dir}"] if self.plugin_dir is not None else []
-        self.call("init", "-input=false", "-lockfile=readonly", *source)
+        self.call("init", "-input=false", "-lockfile=readonly", "-reconfigure",
+                  f"-backend-config=path={self.state.resolve()}", *source)
 
     def plan_apply(self, *, token, destroy=False):
         mode = ["-destroy"] if destroy else []
-        self.call("plan", *mode, "-input=false", f"-state={self.state}",
+        self.call("plan", *mode, "-input=false",
                   f"-var-file={self.local / 'terraform.tfvars.json'}", f"-out={self.plan}", token=token)
         data = json.loads(self.call("show", "-json", str(self.plan), capture=True))
         allowed = {("no-op",), ("delete",) if destroy else ("create",)}
@@ -114,10 +128,17 @@ class Terraform:
                 continue
             raise RuntimeError(f"Refusing unexpected Terraform action for {change['address']}: "
                                f"{', '.join(actions)}. Nothing was applied.")
-        self.call("apply", "-input=false", f"-state={self.state}", str(self.plan), token=token)
+        self.call("apply", "-input=false", str(self.plan), token=token)
 
     @staticmethod
     def portal_ingress_update(resource):
+        def has_unknown(value):
+            if isinstance(value, dict):
+                return any(has_unknown(item) for item in value.values())
+            if isinstance(value, list):
+                return any(has_unknown(item) for item in value)
+            return value is not False
+
         change = resource["change"]
         if (resource["type"] != "yandex_vpc_security_group"
                 or resource["address"] != "yandex_vpc_security_group.portal"
@@ -126,7 +147,7 @@ class Terraform:
         before, after = change["before"], change["after"]
         other_fields = before.keys() | after.keys()
         return (all(before.get(key) == after.get(key) for key in other_fields - {"ingress"})
-                and not any(value for key, value in change.get("after_unknown", {}).items()
+                and not any(has_unknown(value) for key, value in change.get("after_unknown", {}).items()
                             if key != "ingress"))
 
     def resources(self, context):
