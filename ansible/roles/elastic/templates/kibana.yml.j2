@@ -1,5 +1,9 @@
 server.host: "{{ logs_address }}"
 server.port: {{ kibana_port }}
+server.publicBaseUrl: "https://{{ portal_public_address }}:{{ kibana_port }}"
+server.ssl.enabled: true
+server.ssl.certificate: /etc/otus-tls/server.crt
+server.ssl.key: /etc/otus-tls/server.key
 elasticsearch.hosts: ["http://127.0.0.1:9200"]
 elasticsearch.username: kibana_system
 elasticsearch.password: "{{ kibana_password }}"

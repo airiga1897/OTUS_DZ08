@@ -101,9 +101,27 @@ class Terraform:
         data = json.loads(self.call("show", "-json", str(self.plan), capture=True))
         allowed = {("no-op",), ("delete",) if destroy else ("create",)}
         for change in data.get("resource_changes", []):
-            if change["type"] not in TYPES or tuple(change["change"]["actions"]) not in allowed:
-                raise RuntimeError(f"Refusing unexpected Terraform action for {change['address']}.")
+            actions = tuple(change["change"]["actions"])
+            if change["type"] in TYPES and actions in allowed:
+                continue
+            if not destroy and self.portal_ingress_update(change):
+                continue
+            raise RuntimeError(f"Refusing unexpected Terraform action for {change['address']}: "
+                               f"{', '.join(actions)}. Nothing was applied.")
         self.call("apply", "-input=false", f"-state={self.state}", str(self.plan), token=token)
+
+    @staticmethod
+    def portal_ingress_update(resource):
+        change = resource["change"]
+        if (resource["type"] != "yandex_vpc_security_group"
+                or resource["address"] != "yandex_vpc_security_group.portal"
+                or change["actions"] != ["update"]):
+            return False
+        before, after = change["before"], change["after"]
+        other_fields = before.keys() | after.keys()
+        return (all(before.get(key) == after.get(key) for key in other_fields - {"ingress"})
+                and not any(value for key, value in change.get("after_unknown", {}).items()
+                            if key != "ingress"))
 
     def resources(self, context):
         if not self.state.exists():

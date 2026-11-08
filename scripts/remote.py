@@ -1,9 +1,12 @@
 """Deliver the configuration and run service checks over OpenSSH."""
+from hashlib import sha256
+from http.client import HTTPConnection, HTTPException
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import re
 import secrets
 import shlex
+import ssl
 import subprocess
 import tarfile
 import time
@@ -18,6 +21,7 @@ class Remote:
         self.context = context
         self.nodes = nodes
         self.config = local / "ssh-config"
+        self.kibana_certificate = local / "kibana.crt"
         self.config.write_text(self.ssh_config(), encoding="utf-8")
 
     def ssh_config(self):
@@ -54,6 +58,7 @@ class Remote:
                          "kibana_password", "kibana_key", "logstash_password")})
         return dict(
             read(path), logs_address=self.nodes["logs"]["private"],
+            portal_public_address=self.nodes["portal"]["public"],
             wordpress_port=self.context["wordpress_port"], kibana_port=self.context["kibana_port"],
             kafka_cluster_id=read(self.local / "kafka.json")["id"],
         )
@@ -90,6 +95,9 @@ class Remote:
                              timeout=2400)
             finally:
                 self.command("portal", f"rm -r -- {remote}")
+        certificate = self.command("portal", "sudo cat /etc/otus-tls/server.crt", capture=True)
+        ssl.PEM_cert_to_DER_cert(certificate)
+        self.kibana_certificate.write_text(certificate, encoding="ascii")
 
     def bundle(self, path):
         settings = path.parent / "settings.json"
@@ -107,28 +115,46 @@ class Remote:
                 archive.add(source, arcname=name)
 
     def open(self):
+        if not self.kibana_certificate.is_file():
+            raise RuntimeError("No public Kibana certificate is saved. Run deploy to enable direct access.")
+        certificate = ssl.PEM_cert_to_DER_cert(self.kibana_certificate.read_text(encoding="ascii"))
+        fingerprint = sha256(certificate).digest().hex(":").upper()
         for name, node in self.nodes.items():
             print(f'{name}: {node["zone"]}')
         wordpress = self.context["wordpress_port"]
         kibana = self.context["kibana_port"]
-        print(f'WordPress: http://localhost:{wordpress}  Kibana: http://localhost:{kibana}')
-        print("Keep this SSH session open. Ctrl+C closes both tunnels.")
-        run("ssh", "-F", str(self.config), "-o", "ExitOnForwardFailure=yes", "-N",
-            "-L", f"127.0.0.1:{wordpress}:127.0.0.1:{wordpress}",
-            "-L", f"127.0.0.1:{kibana}:127.0.0.1:{kibana}", "portal", timeout=None)
+        address = self.nodes["portal"]["public"]
+        print(f"WordPress: http://{address}:{wordpress}/")
+        print(f"Kibana: https://{address}:{kibana}/")
+        print(f"Kibana certificate SHA-256: {fingerprint}")
+
+    def verify_portal(self):
+        address = self.nodes["portal"]["public"]
+        connection = HTTPConnection(address, self.context["wordpress_port"], timeout=20)
+        try:
+            connection.request("GET", "/")
+            response = connection.getresponse()
+            if response.status != 200:
+                raise RuntimeError(f"Public WordPress URL returned HTTP {response.status}; expected 200 without redirects.")
+            if response.read().count(b'class="lesson-card"') != 8:
+                raise RuntimeError("Public WordPress page must contain eight lesson cards.")
+        except (OSError, HTTPException) as error:
+            raise RuntimeError("The public WordPress URL is not reachable from this computer.") from error
+        finally:
+            connection.close()
 
     def verify(self):
         self.command("portal", "sudo /usr/local/lib/otus-dz08/import-content --check")
+        self.verify_portal()
         port = self.context["wordpress_port"]
-        self.command("portal", f"test \"$(curl -fsS 'http://localhost:{port}/' | "
-                     "grep -c 'class=\"lesson-card\"')\" -eq 8")
+        address = self.nodes["portal"]["public"]
         self.command("logs", "sudo /usr/local/lib/otus-dz08/verify baseline")
         marker = uuid4().hex
         try:
             self.command("logs", "sudo systemctl stop logstash")
             self.command("logs", f"sudo /usr/local/lib/otus-dz08/verify offsets {marker}")
-            self.command("portal", f"curl -fsS -H 'X-OTUS-Check: {marker}' "
-                         f"'http://localhost:{port}/' >/dev/null")
+            self.command("portal", f"curl -fsS --noproxy '*' --resolve '{address}:{port}:127.0.0.1' "
+                         f"-H 'X-OTUS-Check: {marker}' 'http://{address}:{port}/' >/dev/null")
             self.command("logs", f"sudo /usr/local/lib/otus-dz08/verify kafka {marker}")
         finally:
             self.command("logs", f"sudo rm -f /run/otus-dz08-{marker}.json; "

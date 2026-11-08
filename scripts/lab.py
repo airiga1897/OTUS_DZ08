@@ -44,9 +44,7 @@ class Lab:
         if any(node["disk"] * GIB < int(image["minDiskSize"])
                for node in self.policy["nodes"].values()):
             raise RuntimeError("A configured boot disk is smaller than the Ubuntu image minimum.")
-        access_file = ROOT / "config/lab.local.json"
-        configured_cidrs = (read(access_file) if access_file.exists() else self.policy)["admin_cidrs"]
-        cidrs = admin_access(configured_cidrs)
+        cidrs = self.confirm_admin_access()
         nodes = choose(self.policy, zones, used, cloud.quota())
         context = {
             "provider": "yc", "cloud": cloud.cloud, "folder": cloud.folder,
@@ -61,6 +59,11 @@ class Lab:
         save(self.context, context)
         return context
 
+    def confirm_admin_access(self, saved=()):
+        access_file = ROOT / "config/lab.local.json"
+        configured = (read(access_file) if access_file.exists() else self.policy)["admin_cidrs"]
+        return admin_access(list(dict.fromkeys([*saved, *configured])))
+
     def key(self, name):
         key = self.local / name
         if not key.exists():
@@ -68,23 +71,33 @@ class Lab:
         return key.with_suffix(".pub").read_text(encoding="utf-8").strip()
 
     def prepare_variables(self, context):
+        settings = {key: context[key] for key in (
+            "name", "nodes", "admin_cidrs", "platform", "disk_type", "image_id",
+            "wordpress_port", "kibana_port",
+        )}
         if self.variables.exists():
+            previous = read(self.variables)
+            updated = dict(previous, wordpress_port=settings["wordpress_port"],
+                           admin_cidrs=settings["admin_cidrs"])
+            if previous != updated:
+                save(self.variables, updated)
             return
         operator = self.key("operator")
         internal = self.key("ansible")
         save(self.variables, {
             "cloud_id": context["cloud"], "folder_id": context["folder"],
-            **{key: context[key] for key in
-               ("name", "nodes", "admin_cidrs", "platform", "disk_type", "image_id", "kibana_port")},
+            **settings,
             "portal_key": operator, "logs_keys": f"{operator}\nubuntu:{internal}",
         })
 
     def deploy(self):
         cloud = Cloud()
         cloud.confirm_folder()
-        context = self.cloud_context(cloud) if self.context.exists() else self.new_context(cloud)
-        if self.variables.exists():
-            admin_access(context["admin_cidrs"])
+        if self.context.exists():
+            context = self.cloud_context(cloud)
+            context["admin_cidrs"] = self.confirm_admin_access(context["admin_cidrs"])
+        else:
+            context = self.new_context(cloud)
         existing = self.tf.resources(context)
         if context.get("lineage") and not existing:
             raise RuntimeError("Previously deployed infrastructure is missing from local state.")
@@ -122,6 +135,7 @@ class Lab:
             raise RuntimeError("Untracked lab resources found; local recovery files were retained.")
         cloud.confirm_ownership(context["name"], owned, found)
         if owned:
+            self.prepare_variables(context)
             self.tf.init()
             self.tf.plan_apply(token=cloud.token, destroy=True)
         for attempt in range(10):

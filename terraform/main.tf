@@ -52,6 +52,18 @@ resource "yandex_vpc_security_group" "portal" {
     v4_cidr_blocks = var.admin_cidrs
   }
 
+  ingress {
+    protocol       = "TCP"
+    port           = var.wordpress_port
+    v4_cidr_blocks = var.admin_cidrs
+  }
+
+  ingress {
+    protocol       = "TCP"
+    port           = var.kibana_port
+    v4_cidr_blocks = var.admin_cidrs
+  }
+
   egress {
     protocol       = "ANY"
     v4_cidr_blocks = ["0.0.0.0/0"]

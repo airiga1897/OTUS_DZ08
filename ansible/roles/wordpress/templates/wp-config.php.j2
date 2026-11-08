@@ -11,7 +11,7 @@ define('{{ key }}', '{{ (key + wordpress_admin + wordpress_db) | hash("sha512") 
 define('DISALLOW_FILE_MODS', true);
 define('WP_DEBUG', false);
 define('WP_DEFAULT_THEME', 'otus');
-define('WP_HOME', 'http://localhost:{{ wordpress_port }}');
-define('WP_SITEURL', 'http://localhost:{{ wordpress_port }}');
+define('WP_HOME', 'http://{{ portal_public_address }}:{{ wordpress_port }}');
+define('WP_SITEURL', 'http://{{ portal_public_address }}:{{ wordpress_port }}');
 $table_prefix = 'wp_';
 require_once __DIR__ . '/wp-settings.php';

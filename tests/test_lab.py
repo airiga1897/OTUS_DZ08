@@ -1,8 +1,10 @@
 from importlib.util import module_from_spec, spec_from_file_location
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import json
 import os
 import subprocess
@@ -12,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from lab import Lab
+from remote import Remote
 from runtime import Terraform
 from yc import Cloud, choose, requirements
 
@@ -175,6 +178,22 @@ class StateTest(TestCase):
                     tf.plan_apply(token="profiletoken")
                 self.assertEqual(call.call_count, 2)
 
+    def test_existing_portal_security_group_accepts_only_ingress_updates(self):
+        with TemporaryDirectory() as path:
+            tf = Terraform(Path(path))
+            before = {"name": "portal", "ingress": [{"port": 22}]}
+            after = dict(before, ingress=[{"port": 22}, {"port": 8080}, {"port": 5601}])
+            resource = {"type": "yandex_vpc_security_group", "address": "yandex_vpc_security_group.portal",
+                        "change": {"actions": ["update"], "before": before, "after": after}}
+            with patch.object(tf, "call", side_effect=[None, json.dumps({"resource_changes": [resource]}), None]) as call:
+                tf.plan_apply(token="profiletoken")
+                self.assertEqual(call.call_args.args[0], "apply")
+            after["name"] = "unexpected"
+            with patch.object(tf, "call", side_effect=[None, json.dumps({"resource_changes": [resource]})]) as call:
+                with self.assertRaisesRegex(RuntimeError, "Nothing was applied"):
+                    tf.plan_apply(token="profiletoken")
+                self.assertEqual(call.call_count, 2)
+
     def test_destroy_rejects_resources_in_another_folder(self):
         with TemporaryDirectory() as path:
             tf = Terraform(Path(path))
@@ -196,3 +215,41 @@ class StateTest(TestCase):
             with self.assertRaisesRegex(RuntimeError, "outside this clone"):
                 Lab(directory).clean()
             self.assertTrue(sentinel.exists())
+
+
+class PublicAccessTest(TestCase):
+    def setUp(self):
+        folder = self.enterContext(TemporaryDirectory())
+        self.remote = Remote(Path(folder), {"wordpress_port": 8080, "kibana_port": 5601}, {
+            "portal": {"public": "192.0.2.5", "zone": "ru-central1-a"},
+            "logs": {"private": "10.84.9.5", "zone": "ru-central1-a"},
+        })
+
+    def test_open_prints_public_urls_without_starting_ssh(self):
+        self.remote.kibana_certificate.write_text(
+            "-----BEGIN CERTIFICATE-----\nY2VydA==\n-----END CERTIFICATE-----\n", encoding="ascii"
+        )
+        with redirect_stdout(StringIO()) as output, patch("remote.run") as run:
+            self.remote.open()
+        self.assertIn("http://192.0.2.5:8080/", output.getvalue())
+        self.assertIn("https://192.0.2.5:5601/", output.getvalue())
+        self.assertIn("SHA-256:", output.getvalue())
+        run.assert_not_called()
+
+    def test_verify_preserves_the_two_log_checks_and_uses_the_public_wordpress_host(self):
+        with patch("remote.HTTPConnection") as connect, patch.object(self.remote, "command") as command:
+            response = connect.return_value.getresponse.return_value
+            response.status = 200
+            response.read.return_value = b'class="lesson-card"' * 8
+            self.remote.verify()
+        connect.assert_called_once_with("192.0.2.5", 8080, timeout=20)
+        commands = [call.args[1] for call in command.call_args_list]
+        self.assertTrue(any("--resolve '192.0.2.5:8080:127.0.0.1'" in item for item in commands))
+        for phase in ("kafka", "elastic"):
+            self.assertTrue(any(f"/verify {phase} " in item for item in commands))
+
+    def test_public_wordpress_redirect_fails_verification(self):
+        with patch("remote.HTTPConnection", return_value=Mock()) as connect:
+            connect.return_value.getresponse.return_value.status = 301
+            with self.assertRaisesRegex(RuntimeError, "HTTP 301"):
+                self.remote.verify_portal()

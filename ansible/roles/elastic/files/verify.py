@@ -7,6 +7,7 @@ from urllib.request import Request, urlopen
 import json
 import os
 import re
+import ssl
 import subprocess
 import sys
 import time
@@ -15,6 +16,7 @@ SETTINGS = json.loads(Path("/etc/otus-verify.json").read_text())
 TOPICS = ("nginx", "wordpress")
 ES = "http://127.0.0.1:9200"
 KIBANA = SETTINGS["kibana"]
+KIBANA_TLS = ssl.create_default_context(cafile=SETTINGS["kibana_certificate"])
 AUTH = b64encode(f'elastic:{SETTINGS["password"]}'.encode()).decode()
 
 
@@ -23,7 +25,7 @@ def api(base, path, body=None):
     request = Request(base + path, payload, {
         "Authorization": f"Basic {AUTH}", "Content-Type": "application/json", "kbn-xsrf": "true",
     })
-    with urlopen(request, timeout=12) as response:
+    with urlopen(request, timeout=12, context=KIBANA_TLS if base == KIBANA else None) as response:
         return json.load(response)
 
 

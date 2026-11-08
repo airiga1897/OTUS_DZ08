@@ -1,0 +1,70 @@
+- name: Install OpenSSL
+  ansible.builtin.apt:
+    name: openssl
+    lock_timeout: 120
+
+- name: Create TLS directory
+  ansible.builtin.file:
+    path: /etc/otus-tls
+    state: directory
+    owner: root
+    group: "{{ tls_group }}"
+    mode: '0750'
+
+- name: Generate the node's private TLS key
+  ansible.builtin.command:
+    argv: [openssl, genpkey, -algorithm, RSA, -out, /etc/otus-tls/server.key]
+    creates: /etc/otus-tls/server.key
+  register: tls_key
+
+- name: Set TLS key permissions
+  ansible.builtin.file:
+    path: /etc/otus-tls/server.key
+    owner: root
+    group: "{{ tls_group }}"
+    mode: '0640'
+
+- name: Check the certificate expiry and IP address
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - verify
+      - -verify_hostname
+      - "{{ tls_name }}"
+      - -verify_ip
+      - "{{ tls_address }}"
+      - -CAfile
+      - /etc/otus-tls/server.crt
+      - /etc/otus-tls/server.crt
+  register: tls_check
+  changed_when: false
+  failed_when: false
+
+- name: Issue a self-signed certificate for the node
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - req
+      - -new
+      - -x509
+      - -days
+      - '365'
+      - -key
+      - /etc/otus-tls/server.key
+      - -out
+      - /etc/otus-tls/server.crt
+      - -subj
+      - "/CN={{ tls_name }}"
+      - -addext
+      - "subjectAltName=DNS:{{ tls_name }},IP:{{ tls_address }}"
+      - -addext
+      - basicConstraints=critical,CA:FALSE
+  when: tls_key.changed or tls_check.rc != 0
+  register: tls_certificate
+
+- name: Set TLS certificate permissions
+  ansible.builtin.file:
+    path: /etc/otus-tls/server.crt
+    owner: root
+    group: "{{ tls_group }}"
+    mode: '0644'

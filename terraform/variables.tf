@@ -26,8 +26,19 @@ variable "kibana_port" {
   type = number
 }
 
+variable "wordpress_port" {
+  type = number
+}
+
 variable "admin_cidrs" {
   type = list(string)
+
+  validation {
+    condition = length(var.admin_cidrs) > 0 && alltrue([
+      for cidr in var.admin_cidrs : can(cidrnetmask(cidr)) && endswith(cidr, "/32")
+    ])
+    error_message = "Administrative access requires individual IPv4 /32 addresses."
+  }
 }
 
 variable "portal_key" {

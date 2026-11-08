@@ -7,8 +7,8 @@ log_format otus escape=json
     '{"event":"http_access","method":"$request_method","status":$status,"marker":"$otus_marker"}';
 
 server {
-    listen 127.0.0.1:{{ wordpress_port }};
-    server_name localhost;
+    listen {{ wordpress_port }};
+    server_name {{ portal_public_address }};
     root /var/www/otus;
     index index.php;
     access_log /var/log/nginx/otus-access.log otus;
@@ -24,13 +24,21 @@ server {
 }
 
 server {
-    listen 127.0.0.1:{{ kibana_port }};
-    server_name localhost;
+    listen {{ kibana_port }} ssl;
+    server_name {{ portal_public_address }};
+    ssl_certificate /etc/otus-tls/server.crt;
+    ssl_certificate_key /etc/otus-tls/server.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
     access_log off;
 
     location / {
-        proxy_pass http://{{ logs_address }}:{{ kibana_port }};
+        proxy_pass https://{{ logs_address }}:{{ kibana_port }};
+        proxy_ssl_name kibana.internal;
+        proxy_ssl_server_name on;
+        proxy_ssl_trusted_certificate /etc/otus-tls/kibana.crt;
+        proxy_ssl_verify on;
         proxy_http_version 1.1;
         proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Proto https;
     }
 }

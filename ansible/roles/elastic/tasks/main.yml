@@ -76,6 +76,14 @@
   register: logstash_config
   no_log: true
 
+- name: Configure TLS for Kibana on the private network
+  ansible.builtin.include_role:
+    name: lab_tls
+  vars:
+    tls_group: kibana
+    tls_name: kibana.internal
+    tls_address: "{{ logs_address }}"
+
 - name: Configure Kibana
   ansible.builtin.template:
     src: kibana.yml.j2
@@ -112,7 +120,7 @@
   ansible.builtin.systemd_service:
     name: kibana
     enabled: true
-    state: "{{ 'restarted' if kibana_config.changed else 'started' }}"
+    state: "{{ 'restarted' if kibana_config.changed or tls_certificate.changed else 'started' }}"
 
 - name: Create verification directory
   ansible.builtin.file:

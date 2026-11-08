@@ -5,16 +5,17 @@ mock_provider "yandex" {
 }
 
 variables {
-  cloud_id    = "mock-cloud"
-  folder_id   = "mock-folder"
-  name        = "otus-dz08-test"
-  platform    = "standard-v3"
-  image_id    = "mock-image"
-  disk_type   = "network-hdd"
-  admin_cidrs = ["192.0.2.5/32"]
-  portal_key  = "mock-public-key"
-  logs_keys   = "mock-public-key"
-  kibana_port = 5601
+  cloud_id       = "mock-cloud"
+  folder_id      = "mock-folder"
+  name           = "otus-dz08-test"
+  platform       = "standard-v3"
+  image_id       = "mock-image"
+  disk_type      = "network-hdd"
+  admin_cidrs    = ["192.0.2.5/32", "192.0.2.6/32"]
+  portal_key     = "mock-public-key"
+  logs_keys      = "mock-public-key"
+  kibana_port    = 5601
+  wordpress_port = 8080
   nodes = {
     portal = { zone = "ru-central1-a", cidr = "10.84.8.0/24", cores = 2, memory = 4, disk = 20 }
     logs   = { zone = "ru-central1-a", cidr = "10.84.9.0/24", cores = 2, memory = 12, disk = 20 }
@@ -27,6 +28,18 @@ run "two_nodes_one_zone" {
   assert {
     condition     = length(yandex_compute_instance.lab) == 2 && length(yandex_vpc_subnet.lab) == 2
     error_message = "There must be two VMs and two independent subnets in the base lab."
+  }
+
+  assert {
+    condition = (
+      toset([for rule in yandex_vpc_security_group.portal.ingress : rule.port]) ==
+      toset([22, var.wordpress_port, var.kibana_port]) &&
+      alltrue([
+        for rule in yandex_vpc_security_group.portal.ingress :
+        rule.protocol == "TCP" && toset(rule.v4_cidr_blocks) == toset(var.admin_cidrs)
+      ])
+    )
+    error_message = "Portal SSH, WordPress and Kibana must be limited to the same administrative addresses."
   }
 
   assert {
