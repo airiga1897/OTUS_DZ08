@@ -84,6 +84,16 @@ if ($LASTEXITCODE -ne 0) { throw 'Развёртывание не заверши
 .\.venv\Scripts\python.exe scripts/lab.py import-content
 ```
 
+Если архив провайдера подготовлен заранее, поместите его в
+`.tools/providers/registry.terraform.io/yandex-cloud/yandex/`. Для Windows x64
+используйте `terraform-provider-yandex_0.244.0_windows_amd64.zip`. Terraform
+возьмёт пакет с диска и сверит его с `.terraform.lock.hcl`. Для самого стенда
+по-прежнему нужен доступ к Yandex Cloud.
+
+```powershell
+.\.venv\Scripts\python.exe scripts/lab.py deploy --plugin-dir .\.tools\providers
+```
+
 ## Проверка
 
 ```powershell
@@ -131,6 +141,12 @@ if ($LASTEXITCODE -ne 0) { throw 'Развёртывание не заверши
 
 ```powershell
 .\.venv\Scripts\python.exe scripts/lab.py destroy
+```
+
+Для разбора стенда с заранее подготовленным провайдером укажите тот же каталог.
+
+```powershell
+.\.venv\Scripts\python.exe scripts/lab.py destroy --plugin-dir .\.tools\providers
 ```
 
 После успешного `destroy` можно удалить настройки YC и сохранённые данные

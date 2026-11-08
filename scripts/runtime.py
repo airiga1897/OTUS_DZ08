@@ -80,10 +80,11 @@ def locked(directory):
 
 
 class Terraform:
-    def __init__(self, local):
+    def __init__(self, local, *, plugin_dir=None):
         self.local = local
         self.state = local / "terraform.tfstate"
         self.plan = local / "saved.tfplan"
+        self.plugin_dir = plugin_dir
 
     def call(self, *args, capture=False, token=None):
         env = dict(os.environ, TF_DATA_DIR=str(self.local / "terraform-data"),
@@ -96,7 +97,8 @@ class Terraform:
         return run(cli, f"-chdir={ROOT / 'terraform'}", *args, capture=capture, env=env)
 
     def init(self):
-        self.call("init", "-input=false", "-lockfile=readonly")
+        source = [f"-plugin-dir={self.plugin_dir}"] if self.plugin_dir is not None else []
+        self.call("init", "-input=false", "-lockfile=readonly", *source)
 
     def plan_apply(self, *, token, destroy=False):
         mode = ["-destroy"] if destroy else []

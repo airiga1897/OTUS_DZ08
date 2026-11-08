@@ -1,6 +1,7 @@
 """Operator entry point for the two-VM lab."""
 from argparse import ArgumentParser
 from ipaddress import ip_address, ip_network
+from pathlib import Path
 from urllib.error import URLError
 import logging
 import shutil
@@ -17,11 +18,11 @@ LOG = logging.getLogger(__name__)
 
 
 class Lab:
-    def __init__(self, local):
+    def __init__(self, local, *, plugin_dir=None):
         self.local = local
         self.context = local / "context.json"
         self.variables = local / "terraform.tfvars.json"
-        self.tf = Terraform(local)
+        self.tf = Terraform(local, plugin_dir=plugin_dir)
         self.policy = read(ROOT / "config/lab.json")
 
     def state_context(self):
@@ -184,14 +185,23 @@ def main():
     parser = ArgumentParser(description=__doc__)
     parser.add_argument("--test-context", action="store_true",
                         help="recover an interrupted test-cycle with destroy")
+    parser.add_argument("--plugin-dir", type=Path,
+                        help="install Terraform providers only from this directory for deploy or destroy")
     parser.add_argument("command", choices=[
         "deploy", "import-content", "verify", "open", "destroy", "test-cycle",
     ])
     args = parser.parse_args()
     if args.test_context and args.command != "destroy":
         parser.error("--test-context is only available with destroy")
+    plugin_dir = args.plugin_dir
+    if plugin_dir is not None:
+        if args.command not in {"deploy", "destroy"}:
+            parser.error("--plugin-dir is only available with deploy or destroy")
+        plugin_dir = plugin_dir.resolve()
+        if not plugin_dir.is_dir():
+            parser.error(f"Terraform plugin directory does not exist: {plugin_dir}")
     test = args.command == "test-cycle" or args.test_context
-    lab = Lab(ROOT / (".local-test" if test else ".local"))
+    lab = Lab(ROOT / (".local-test" if test else ".local"), plugin_dir=plugin_dir)
     try:
         with locked(lab.local):
             if args.command == "test-cycle" and (lab.context.exists() or lab.tf.state.exists()):
