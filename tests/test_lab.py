@@ -29,14 +29,19 @@ with patch.dict(sys.modules, {"fcntl": object()}):
 
 class AuthorizationTest(TestCase):
     def test_cloud_reads_the_clone_profile(self):
-        with patch("yc.which", return_value="yc"), patch("yc.subprocess.run") as run:
+        with (
+            patch("yc.Path.is_file", return_value=True),
+            patch("yc.which") as which,
+            patch("yc.subprocess.run") as run,
+        ):
             run.side_effect = [subprocess.CompletedProcess([], 0, value)
                                for value in ("cloud\n", "folder\n", "profiletoken\n")]
             with patch.dict(os.environ, {"YC_TOKEN": "oldtoken", "YC_FOLDER_ID": "oldfolder"}):
                 cloud = Cloud()
                 self.assertEqual(os.environ["YC_TOKEN"], "oldtoken")
             self.assertEqual((cloud.cloud, cloud.folder, cloud.token), ("cloud", "folder", "profiletoken"))
-            config = ["yc", "--config", str(ROOT / ".tools/yc-config.yaml")]
+            which.assert_not_called()
+            config = [str(ROOT / ".tools/bin/yc.exe"), "--config", str(ROOT / ".tools/yc-config.yaml")]
             self.assertEqual([call.args[0] for call in run.call_args_list], [
                 [*config, "config", "get", "cloud-id"],
                 [*config, "config", "get", "folder-id"],
@@ -44,11 +49,16 @@ class AuthorizationTest(TestCase):
             ])
 
     def test_missing_profile_stops_before_cloud_or_terraform_calls(self):
-        with TemporaryDirectory() as path, patch("yc.which", return_value="yc"), patch(
-            "yc.subprocess.run", side_effect=subprocess.CalledProcessError(1, ["yc"])
-        ) as run, patch.object(Cloud, "confirm_folder") as api, patch.object(Terraform, "init") as init:
+        with (
+            TemporaryDirectory() as path,
+            patch("yc.Path.is_file", return_value=False),
+            patch("yc.which", return_value="yc"),
+            patch("yc.subprocess.run", side_effect=subprocess.CalledProcessError(1, ["yc"])) as run,
+            patch.object(Cloud, "confirm_folder") as api,
+            patch.object(Terraform, "init") as init,
+        ):
             lab = Lab(Path(path))
-            with self.assertRaisesRegex(RuntimeError, r"& \$yc init --no-browser"):
+            with self.assertRaisesRegex(RuntimeError, r"yc-config\.yaml init"):
                 lab.deploy()
             self.assertEqual(run.call_args_list[0].args[0], [
                 "yc", "--config", str(ROOT / ".tools/yc-config.yaml"), "config", "get", "cloud-id",

@@ -29,7 +29,7 @@ TYPES = {
 
 def profile_value(cli, config, *args, pattern):
     label = " ".join(args)
-    hint = "Set up the local YC profile with `& $yc init --no-browser` as shown in README.md."
+    hint = "Run `yc.exe --config PATH_TO_CLONE/.tools/yc-config.yaml init` as shown in README.md."
     try:
         result = subprocess.run([cli, "--config", str(config), *args], check=True, capture_output=True,
                                 encoding="utf-8", errors="replace", timeout=60)
@@ -45,7 +45,7 @@ class Cloud:
     def __init__(self):
         tools = Path(__file__).resolve().parents[1] / ".tools"
         bundled = tools / "bin/yc.exe"
-        cli = which("yc") or (str(bundled) if bundled.is_file() else None)
+        cli = str(bundled) if bundled.is_file() else which("yc")
         if not cli:
             raise RuntimeError("Install yc in PATH or place yc.exe in .tools/bin.")
 

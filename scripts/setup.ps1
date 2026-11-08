@@ -1,11 +1,27 @@
+param([switch]$PrepareLocalProvider)
+
 $ErrorActionPreference = 'Stop'
 
+function Get-ToolArchive {
+    param([string]$Url, [string]$Destination, [string]$Name)
+
+    Write-Host "Downloading $Name"
+    $curl = Get-Command curl.exe -CommandType Application -ErrorAction SilentlyContinue
+    if ($curl) {
+        & $curl.Source --fail --location --silent --show-error --retry 2 --max-time 180 --output $Destination $Url
+        if ($LASTEXITCODE) { throw "Cannot download $Name." }
+    } else {
+        $ProgressPreference = 'SilentlyContinue'
+        Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $Destination -TimeoutSec 180
+    }
+}
+
 function Install-MissingTool {
-    param([string]$Executable, [string]$Url, [string]$Sha256)
+    param([string]$Executable, [string]$Url, [string]$Sha256, [switch]$LocalOnly)
 
     $destination = Join-Path $PWD ".tools/bin/$Executable"
-    if ((Get-Command $Executable -CommandType Application -ErrorAction SilentlyContinue) -or
-        (Test-Path -LiteralPath $destination -PathType Leaf)) {
+    if ((Test-Path -LiteralPath $destination -PathType Leaf) -or
+        (-not $LocalOnly -and (Get-Command $Executable -CommandType Application -ErrorAction SilentlyContinue))) {
         return
     }
 
@@ -15,15 +31,7 @@ function Install-MissingTool {
     $archive = "$staging.zip"
     $candidate = "$staging.tmp"
     try {
-        Write-Host "Downloading $Executable"
-        $curl = Get-Command curl.exe -CommandType Application -ErrorAction SilentlyContinue
-        if ($curl) {
-            & $curl.Source --fail --location --silent --show-error --retry 2 --max-time 180 --output $archive $Url
-            if ($LASTEXITCODE) { throw "Cannot download $Executable." }
-        } else {
-            $ProgressPreference = 'SilentlyContinue'
-            Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $archive -TimeoutSec 180
-        }
+        Get-ToolArchive -Url $Url -Destination $archive -Name $Executable
         if ($Sha256 -and (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $Sha256) {
             throw "SHA-256 mismatch for $Executable."
         }
@@ -45,6 +53,42 @@ function Install-MissingTool {
     }
 }
 
+function Install-LocalProvider {
+    param([string]$Architecture)
+
+    $source = 'registry.terraform.io/yandex-cloud/yandex'
+    $lock = Get-Content -Raw -LiteralPath 'terraform/.terraform.lock.hcl'
+    $provider = [regex]::Match($lock, '(?ms)^provider "' + [regex]::Escape($source) + '"\s*\{(?<body>.*?)^\}')
+    $version = [regex]::Match($provider.Groups['body'].Value, '(?m)^\s*version\s*=\s*"(\d+\.\d+\.\d+)"').Groups[1].Value
+    $hashes = [regex]::Matches($provider.Groups['body'].Value, '"zh:([a-fA-F0-9]{64})"') |
+        ForEach-Object { $_.Groups[1].Value }
+    if (-not $version -or -not $hashes) { throw "The lock file lacks a version or ZIP checksums for $source." }
+
+    $directory = Join-Path $PWD ".tools/providers/$source"
+    $name = "terraform-provider-yandex_${version}_windows_${Architecture}.zip"
+    $archive = Join-Path $directory $name
+    if (Test-Path -LiteralPath $archive -PathType Leaf) {
+        if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -notin $hashes) {
+            throw "The cached archive does not match the lock file. Remove '$archive' and run setup again."
+        }
+        Write-Host "Local provider ready: $archive"
+        return
+    }
+
+    New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    $candidate = Join-Path $directory ([guid]::NewGuid().ToString() + '.tmp')
+    try {
+        Get-ToolArchive -Url "https://terraform-mirror.yandexcloud.net/$source/$name" -Destination $candidate -Name $name
+        if ((Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash -notin $hashes) {
+            throw "The downloaded archive does not match the lock file: $name."
+        }
+        [System.IO.File]::Move($candidate, $archive)
+        Write-Host "Local provider ready: $archive"
+    } finally {
+        if (Test-Path -LiteralPath $candidate) { Remove-Item -LiteralPath $candidate -Force }
+    }
+}
+
 Push-Location (Join-Path $PSScriptRoot '..')
 try {
     if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
@@ -62,7 +106,7 @@ try {
         $terraformHash = 'dd530788dff2c132bab59e29c00c81b8d2a9aa4b0c9832addd0777bd07b4b6cf'
     }
     Install-MissingTool terraform.exe "https://releases.hashicorp.com/terraform/$terraformVersion/terraform_${terraformVersion}_windows_${architecture}.zip" $terraformHash
-    Install-MissingTool yc.exe "https://storage.yandexcloud.net/yandexcloud-yc/release/yc_windows_${architecture}.zip"
+    Install-MissingTool yc.exe "https://storage.yandexcloud.net/yandexcloud-yc/release/yc_windows_${architecture}.zip" -LocalOnly
 
     $poetryVersion = '2.4.1'
     $existing = Get-Command poetry -CommandType Application -ErrorAction SilentlyContinue |
@@ -109,6 +153,7 @@ try {
         $env:POETRY_CACHE_DIR = $oldCache
         $env:POETRY_KEYRING_ENABLED = $oldKeyring
     }
+    if ($PrepareLocalProvider) { Install-LocalProvider -Architecture $architecture }
 } finally {
     Pop-Location
 }

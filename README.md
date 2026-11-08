@@ -46,14 +46,30 @@ git branch --all
 git switch 'ИМЯ_ВЕТКИ'
 ```
 
-Дальнейшие команды выполняйте из корня клона. `setup.ps1` подготавливает
-`.venv` через Poetry. Если Terraform или Yandex Cloud CLI отсутствует в `PATH`
-и в `.tools/bin`, скрипт скачивает его в `.tools/bin`. Для уже установленного
-Terraform требуется версия от 1.6 до 2.0, не включая 2.0. При запуске через
-`lab.py` провайдер по умолчанию устанавливается с зеркала Yandex Cloud.
+При нескольких выходах создайте `config/lab.local.json` из примера, если
+файла ещё нет. Замените адреса из примера подтверждёнными публичными IPv4
+всех используемых выходов, каждый с маской `/32`. Локальный файл исключён
+из Git. [Пример конфигурации](config/lab.local.example.json)
+
+```powershell
+Copy-Item .\config\lab.local.example.json .\config\lab.local.json
+```
+
+Дальнейшие команды выполняйте из корня клона. `setup.ps1` создаёт `.venv`
+через Poetry и подготавливает `.tools/bin/yc.exe` для этого клона.
+Если Terraform отсутствует в `PATH` и `.tools/bin`, скрипт скачивает его.
+Подходит Terraform версии `>= 1.6, < 2.0`.
 
 ```powershell
 .\scripts\setup.ps1
+```
+
+Если провайдер нужен заранее для установки с диска, запустите подготовку
+с параметром `-PrepareLocalProvider`. Скрипт проверит архив по lock-файлу
+и сохранит его в `.tools/providers`.
+
+```powershell
+.\scripts\setup.ps1 -PrepareLocalProvider
 ```
 
 Для входа в YC настройте профиль этого клона. `lab.py` берёт ID облака,
@@ -63,10 +79,7 @@ ID каталога и временный IAM-токен из `.tools/yc-config.
 и каталог.
 
 ```powershell
-$ycExe = (Get-Command yc.exe, .\.tools\bin\yc.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
-$ycConfig = Join-Path $PWD '.tools\yc-config.yaml'
-$yc = { & $ycExe --config $ycConfig @args }.GetNewClosure()
-& $yc init --no-browser
+.\.tools\bin\yc.exe --config "$PWD\.tools\yc-config.yaml" init
 ```
 
 `deploy` проверяет квоты перед созданием стенда. При пустом `admin_cidrs`
@@ -84,11 +97,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Развёртывание не заверши
 .\.venv\Scripts\python.exe scripts/lab.py import-content
 ```
 
-Если архив провайдера подготовлен заранее, поместите его в
-`.tools/providers/registry.terraform.io/yandex-cloud/yandex/`. Для Windows x64
-используйте `terraform-provider-yandex_0.244.0_windows_amd64.zip`. Terraform
-возьмёт пакет с диска и сверит его с `.terraform.lock.hcl`. Для самого стенда
-по-прежнему нужен доступ к Yandex Cloud.
+Обычный `deploy` скачивает провайдер с зеркала Yandex Cloud. Если архив уже
+подготовлен, запустите `deploy` с `--plugin-dir`, затем выполните `import-content`.
 
 ```powershell
 .\.venv\Scripts\python.exe scripts/lab.py deploy --plugin-dir .\.tools\providers
