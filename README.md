@@ -60,6 +60,11 @@ Copy-Item .\config\lab.local.example.json .\config\lab.local.json
 Если Terraform отсутствует в `PATH` и `.tools/bin`, скрипт скачивает его.
 Подходит Terraform версии `>= 1.6, < 2.0`.
 
+Подготовка также скачивает провайдер Terraform в `.tools/providers`
+и проверяет архив по lock-файлу. При повторном запуске скрипт проверяет
+сохранённый архив и использует его повторно. Вся подготовка выполняется
+одной командой.
+
 ```powershell
 .\scripts\setup.ps1
 ```
@@ -70,13 +75,8 @@ Copy-Item .\config\lab.local.example.json .\config\lab.local.json
 на портал по SSH. Если файл отсутствует или повреждён, повторите
 `scripts/setup.ps1`. Каталог `.tools` исключён из Git.
 
-Если провайдер нужен заранее для установки с диска, запустите подготовку
-с параметром `-PrepareLocalProvider`. Скрипт проверит архив по lock-файлу
-и сохранит его в `.tools/providers`.
-
-```powershell
-.\scripts\setup.ps1 -PrepareLocalProvider
-```
+В командах `deploy` и `destroy` ниже параметр `--plugin-dir` указывает
+Terraform использовать подготовленный локальный провайдер.
 
 Для входа в YC настройте профиль этого клона. `lab.py` берёт ID облака,
 ID каталога и временный IAM-токен из `.tools/yc-config.yaml` при `deploy`
@@ -111,16 +111,9 @@ ID каталога и временный IAM-токен из `.tools/yc-config.
 После успешного развёртывания отдельно загрузите восемь материалов WordPress.
 
 ```powershell
-.\.venv\Scripts\python.exe scripts/lab.py deploy
+.\.venv\Scripts\python.exe scripts/lab.py deploy --plugin-dir .\.tools\providers
 if ($LASTEXITCODE -ne 0) { throw 'Развёртывание не завершилось' }
 .\.venv\Scripts\python.exe scripts/lab.py import-content
-```
-
-Обычный `deploy` скачивает провайдер с зеркала Yandex Cloud. Если архив уже
-подготовлен, запустите `deploy` с `--plugin-dir`, затем выполните `import-content`.
-
-```powershell
-.\.venv\Scripts\python.exe scripts/lab.py deploy --plugin-dir .\.tools\providers
 ```
 
 ## Проверка
@@ -168,11 +161,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Развёртывание не заверши
 Удалите стенд из того же клона. После подтверждения удаления ресурсов
 команда очищает локальные данные стенда и содержимое `.tools/temp`.
 
-```powershell
-.\.venv\Scripts\python.exe scripts/lab.py destroy
-```
-
-Для разбора стенда с заранее подготовленным провайдером укажите тот же каталог.
+Для разбора стенда укажите каталог провайдера, подготовленного через
+`setup.ps1`.
 
 ```powershell
 .\.venv\Scripts\python.exe scripts/lab.py destroy --plugin-dir .\.tools\providers

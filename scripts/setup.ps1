@@ -1,5 +1,3 @@
-param([switch]$PrepareLocalProvider)
-
 $ErrorActionPreference = 'Stop'
 
 function Get-ToolArchive {
@@ -155,7 +153,7 @@ try {
         $env:POETRY_KEYRING_ENABLED = $oldKeyring
     }
     Install-WpCli -Root $PWD
-    if ($PrepareLocalProvider) { Install-LocalProvider -Architecture $architecture }
+    Install-LocalProvider -Architecture $architecture
 } finally {
     Pop-Location
 }
