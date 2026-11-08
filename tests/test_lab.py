@@ -5,6 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import Mock, patch
+from copy import deepcopy
 import json
 import os
 import subprocess
@@ -216,8 +217,17 @@ class StateTest(TestCase):
     def test_existing_portal_security_group_accepts_only_ingress_updates(self):
         with TemporaryDirectory() as path:
             tf = Terraform(Path(path))
-            before = {"name": "portal", "ingress": [{"port": 22}]}
-            after = dict(before, ingress=[{"port": 22}, {"port": 8080}, {"port": 5601}])
+            approved = ["95.31.25.30/32", "95.31.25.31/32"]
+            (Path(path) / "terraform.tfvars.json").write_text(json.dumps({"admin_cidrs": approved}))
+            before = {"name": "portal", "ingress": [
+                {"id": str(port), "port": port, "protocol": "TCP", "v4_cidr_blocks": approved[:1]}
+                for port in (22, 8080, 5601)
+            ]}
+            after = deepcopy(before)
+            for rule in after["ingress"]:
+                rule["id"] = None
+                rule["v4_cidr_blocks"] = approved
+            after["ingress"].reverse()
             resource = {"type": "yandex_vpc_security_group", "address": "yandex_vpc_security_group.portal",
                         "change": {"actions": ["update"], "before": before, "after": after}}
             resource["change"]["after_unknown"] = {
@@ -228,13 +238,52 @@ class StateTest(TestCase):
                 tf.plan_apply(token="profiletoken")
                 self.assertEqual(call.call_args.args[0], "apply")
             resource["change"]["after_unknown"]["egress"][0]["v4_cidr_blocks"] = [True]
-            self.assertFalse(Terraform.portal_ingress_update(resource))
+            self.assertFalse(Terraform.portal_ingress_update(resource, approved))
             resource["change"]["after_unknown"]["egress"][0]["v4_cidr_blocks"] = [False]
             after["name"] = "unexpected"
             with patch.object(tf, "call", side_effect=[None, json.dumps({"resource_changes": [resource]})]) as call:
                 with self.assertRaisesRegex(RuntimeError, "Nothing was applied"):
                     tf.plan_apply(token="profiletoken")
                 self.assertEqual(call.call_count, 2)
+
+    def test_unsafe_ingress_changes_are_rejected_before_apply(self):
+        approved = ["95.31.25.30/32", "95.31.25.31/32"]
+        before = {"name": "portal", "ingress": [
+            {"id": str(port), "port": port, "protocol": "TCP", "v4_cidr_blocks": approved[:1]}
+            for port in (22, 8080, 5601)
+        ]}
+        variants = {}
+        for name, cidrs in {
+            "all": ["0.0.0.0/0"], "subnet": ["95.31.25.0/24"],
+            "private": ["192.168.1.1/32"], "ipv6": ["::/0"],
+            "unapproved": [*approved, "95.31.25.32/32"],
+            "remove_previous": approved[1:], "empty": [],
+        }.items():
+            value = deepcopy(before)
+            value["ingress"][0]["v4_cidr_blocks"] = cidrs
+            variants[name] = value
+        for field, value in {"port": 443, "protocol": "ANY", "security_group_id": "other"}.items():
+            after = deepcopy(before)
+            after["ingress"][0][field] = value
+            variants[field] = after
+        variants["remove_rule"] = dict(before, ingress=before["ingress"][:-1])
+        variants["duplicate_rule"] = dict(before, ingress=[*before["ingress"], before["ingress"][0]])
+        variants["unknown_cidr"] = deepcopy(before)
+        variants["unknown_port"] = deepcopy(before)
+        with TemporaryDirectory() as path:
+            tf = Terraform(Path(path))
+            (Path(path) / "terraform.tfvars.json").write_text(json.dumps({"admin_cidrs": approved}))
+            for name, after in variants.items():
+                with self.subTest(name=name):
+                    resource = {"type": "yandex_vpc_security_group", "address": "yandex_vpc_security_group.portal",
+                                "change": {"actions": ["update"], "before": before, "after": after}}
+                    if name.startswith("unknown_"):
+                        field = "port" if name == "unknown_port" else "v4_cidr_blocks"
+                        resource["change"]["after_unknown"] = {"ingress": [{field: True}]}
+                    with patch.object(tf, "call", side_effect=[None, json.dumps({"resource_changes": [resource]})]) as call:
+                        with self.assertRaisesRegex(RuntimeError, "Nothing was applied"):
+                            tf.plan_apply(token="profiletoken")
+                        self.assertEqual(call.call_count, 2)
 
     def test_destroy_rejects_resources_in_another_folder(self):
         with TemporaryDirectory() as path:

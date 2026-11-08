@@ -135,14 +135,16 @@ class Terraform:
                 raise RuntimeError("Подготовка IP-функции затрагивает другие ресурсы.")
             if change["type"] in TYPES and actions in allowed:
                 continue
-            if not destroy and self.portal_ingress_update(change):
+            if (not destroy and change["address"] == "yandex_vpc_security_group.portal"
+                    and self.portal_ingress_update(
+                        change, read(self.local / "terraform.tfvars.json")["admin_cidrs"])):
                 continue
             raise RuntimeError(f"Refusing unexpected Terraform action for {change['address']}: "
                                f"{', '.join(actions)}. Nothing was applied.")
         self.call("apply", "-input=false", str(self.plan), token=token)
 
     @staticmethod
-    def portal_ingress_update(resource):
+    def portal_ingress_update(resource, approved_cidrs):
         def has_unknown(value):
             if isinstance(value, dict):
                 return any(has_unknown(item) for item in value.values())
@@ -157,9 +159,37 @@ class Terraform:
             return False
         before, after = change["before"], change["after"]
         other_fields = before.keys() | after.keys()
-        return (all(before.get(key) == after.get(key) for key in other_fields - {"ingress"})
-                and not any(has_unknown(value) for key, value in change.get("after_unknown", {}).items()
-                            if key != "ingress"))
+        if (not all(before.get(key) == after.get(key) for key in other_fields - {"ingress"})
+                or any(has_unknown(value) for key, value in change.get("after_unknown", {}).items()
+                       if key != "ingress")):
+            return False
+        # Rule IDs are assigned by YC; all access-defining fields must be known.
+        unknown = change.get("after_unknown", {}).get("ingress", [])
+        if not isinstance(unknown, list) or any(
+            not isinstance(rule, dict) or any(has_unknown(value) for key, value in rule.items() if key != "id")
+            for rule in unknown
+        ):
+            return False
+
+        def rules_by_settings(rules):
+            result = {}
+            for rule in rules:
+                settings = {key: value for key, value in rule.items() if key not in {"id", "v4_cidr_blocks"}}
+                key = json.dumps(settings, sort_keys=True)
+                if key in result:
+                    raise ValueError("Duplicate ingress settings")
+                result[key] = set(admin_access(rule["v4_cidr_blocks"]))
+            return result
+
+        try:
+            approved = set(admin_access(approved_cidrs))
+            old = rules_by_settings(before["ingress"])
+            new = rules_by_settings(after["ingress"])
+        except (KeyError, TypeError, ValueError):
+            return False
+        return bool(old) and old.keys() == new.keys() and all(
+            old[key] <= new[key] and new[key] <= approved for key in old
+        )
 
     def resources(self, context):
         if not self.state.exists():
