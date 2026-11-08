@@ -82,6 +82,12 @@ class Cloud:
         base, path = TYPES[kind]
         return self.pages(base, path, path, folderId=self.folder)
 
+    def lab_names(self):
+        return sorted({
+            item["name"] for item in self.resources("yandex_vpc_network")
+            if re.fullmatch(r"otus-dz08-[0-9a-f]{16}", item["name"])
+        })
+
     def inventory(self, prefix):
         return {
             (kind, item["id"])

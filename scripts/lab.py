@@ -41,6 +41,14 @@ class Lab:
     def new_context(self, cloud):
         if self.tf.state.exists() or self.variables.exists():
             raise RuntimeError("Terraform files exist without context; recover them before deploy.")
+        if self.local.name != ".local-test":
+            existing = cloud.lab_names()
+            if existing:
+                raise RuntimeError(
+                    f"DZ08 stand already exists in the selected YC folder: {', '.join(existing)}. "
+                    "This clone has no local deployment context. "
+                    "Use the original clone with its Terraform state and SSH keys to resume or destroy it."
+                )
         image, zones, used = cloud.catalog(self.policy)
         if any(node["disk"] * GIB < int(image["minDiskSize"])
                for node in self.policy["nodes"].values()):
@@ -104,6 +112,8 @@ class Lab:
             raise RuntimeError("Previously deployed infrastructure is missing from local state.")
         if cloud.inventory(context["name"]) != existing:
             raise RuntimeError("YC and state disagree; keep the files for ownership diagnosis.")
+        if existing:
+            LOG.info("Reusing existing DZ08 stand %s.", context["name"])
         self.prepare_variables(context)
         self.tf.init()
         self.tf.plan_apply(token=cloud.token)

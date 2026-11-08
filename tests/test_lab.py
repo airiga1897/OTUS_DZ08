@@ -159,6 +159,23 @@ class ImportTest(TestCase):
 
 
 class StateTest(TestCase):
+    def test_clean_deploy_reports_existing_yc_stand_before_placement(self):
+        stand = "otus-dz08-0123456789abcdef"
+        cloud = Cloud.__new__(Cloud)
+        with (
+            TemporaryDirectory() as path,
+            patch("lab.Cloud", return_value=cloud),
+            patch.object(cloud, "confirm_folder"),
+            patch.object(cloud, "resources", return_value=[{"name": "default"}, {"name": stand}]) as resources,
+            patch.object(cloud, "catalog") as catalog,
+        ):
+            lab = Lab(Path(path) / ".local")
+            with self.assertRaisesRegex(RuntimeError, f"DZ08 stand already exists.*{stand}"):
+                lab.deploy()
+            resources.assert_called_once_with("yandex_vpc_network")
+            catalog.assert_not_called()
+            self.assertFalse(lab.context.exists())
+
     def test_new_context_prefers_local_access_policy_when_present(self):
         with TemporaryDirectory() as path:
             root = Path(path)
@@ -169,7 +186,9 @@ class StateTest(TestCase):
             cloud.cloud, cloud.folder = "cloud", "folder"
             with patch("lab.ROOT", root), patch.object(
                 cloud, "catalog", return_value=({"id": "image", "minDiskSize": 0}, ZONES, [])
-            ), patch.object(cloud, "quota"), patch.object(cloud, "inventory", return_value=set()), patch(
+            ), patch.object(cloud, "lab_names", return_value=[]), patch.object(cloud, "quota"), patch.object(
+                cloud, "inventory", return_value=set()
+            ), patch(
                 "lab.choose", return_value={}
             ), patch("lab.admin_access", side_effect=list) as access:
                 lab = Lab(root)
