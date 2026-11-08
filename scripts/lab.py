@@ -27,7 +27,11 @@ class Lab:
 
     def state_context(self):
         if not self.context.exists():
-            raise RuntimeError("No local deployment context. Run deploy first.")
+            raise RuntimeError(
+                "В этом клоне нет локального контекста ДЗ08. "
+                "Для работы с существующим стендом используйте исходный клон с Terraform state. "
+                "Если state утрачен, удалите ресурсы стенда вручную в консоли Yandex Cloud."
+            )
         return read(self.context)
 
     def cloud_context(self, cloud):
@@ -45,9 +49,9 @@ class Lab:
             existing = cloud.lab_names()
             if existing:
                 raise RuntimeError(
-                    f"DZ08 stand already exists in the selected YC folder: {', '.join(existing)}. "
-                    "This clone has no local deployment context. "
-                    "Use the original clone with its Terraform state and SSH keys to resume or destroy it."
+                    f"В выбранном каталоге YC уже есть стенд ДЗ08 ({', '.join(existing)}). "
+                    "В этом клоне нет локального контекста. "
+                    "Для повторного запуска или удаления используйте исходный клон с Terraform state и SSH-ключами."
                 )
         image, zones, used = cloud.catalog(self.policy)
         if any(node["disk"] * GIB < int(image["minDiskSize"])
@@ -113,7 +117,7 @@ class Lab:
         if cloud.inventory(context["name"]) != existing:
             raise RuntimeError("YC and state disagree; keep the files for ownership diagnosis.")
         if existing:
-            LOG.info("Reusing existing DZ08 stand %s.", context["name"])
+            LOG.info("Продолжаем работу с существующим стендом ДЗ08 %s.", context["name"])
         self.prepare_variables(context)
         self.tf.init()
         self.tf.plan_apply(token=cloud.token)

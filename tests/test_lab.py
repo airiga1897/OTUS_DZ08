@@ -170,7 +170,7 @@ class StateTest(TestCase):
             patch.object(cloud, "catalog") as catalog,
         ):
             lab = Lab(Path(path) / ".local")
-            with self.assertRaisesRegex(RuntimeError, f"DZ08 stand already exists.*{stand}"):
+            with self.assertRaisesRegex(RuntimeError, rf"уже есть стенд ДЗ08 \({stand}\)"):
                 lab.deploy()
             resources.assert_called_once_with("yandex_vpc_network")
             catalog.assert_not_called()
