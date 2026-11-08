@@ -72,8 +72,14 @@ if ($LASTEXITCODE -ne 0) { throw 'Развёртывание не заверши
 `verify` проверяет параметры топиков и прохождение событий обоих источников
 через Kafka и Logstash в Elasticsearch. `open` держит открытыми SSH-туннели
 к [WordPress](http://localhost:8080) и [Kibana](http://localhost:5601).
-В Kibana войдите как `elastic` с паролем из поля `elastic_password` файла
-`.local/secrets.json`. В **Discover** выберите последние 15 минут и по очереди
+В Kibana войдите как `elastic`. Скопируйте пароль в буфер обмена из второго
+окна PowerShell в корне клона.
+
+```powershell
+(Get-Content -Raw .local/secrets.json | ConvertFrom-Json).elastic_password | Set-Clipboard
+```
+
+В **Discover** выберите последние 15 минут и по очереди
 откройте **ДЗ08 nginx** и **ДЗ08 wordpress**. Контрольные события находятся
 по запросу `otus.marker: *`.
 
