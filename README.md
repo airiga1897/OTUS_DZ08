@@ -55,12 +55,16 @@ Terraform требуется версия от 1.6 до 2.0, не включая
 .\scripts\setup.ps1
 ```
 
-Если профиль YC ещё не настроен, выберите облако и каталог стенда в мастере
-`init`. `lab.py` берёт ID облака, ID каталога и временный IAM-токен из
-активного профиля при `deploy` и `destroy`.
+Для входа в YC настройте профиль этого клона. `lab.py` берёт ID облака,
+ID каталога и временный IAM-токен из `.tools/yc-config.yaml` при `deploy`
+и `destroy`. Если профиль ещё не настроен, запустите мастер и выберите
+облако и каталог стенда. Для уже созданного стенда выберите прежние облако
+и каталог.
 
 ```powershell
-$yc = (Get-Command yc.exe, .\.tools\bin\yc.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+$ycExe = (Get-Command yc.exe, .\.tools\bin\yc.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+$ycConfig = Join-Path $PWD '.tools\yc-config.yaml'
+$yc = { & $ycExe --config $ycConfig @args }.GetNewClosure()
 & $yc init --no-browser
 ```
 
@@ -121,10 +125,18 @@ if ($LASTEXITCODE -ne 0) { throw 'Развёртывание не заверши
 
 ## Удаление
 
-Удалите стенд из того же клона.
+Удалите стенд из того же клона. После подтверждения удаления ресурсов
+команда очищает локальные данные стенда и содержимое `.tools/temp`.
 
 ```powershell
 .\.venv\Scripts\python.exe scripts/lab.py destroy
+```
+
+После успешного `destroy` можно удалить настройки YC и сохранённые данные
+входа этого клона. Выполните команду из корня клона.
+
+```powershell
+Remove-Item -LiteralPath .\.tools\yc-config.yaml
 ```
 
 Инфраструктура описана в [Terraform](terraform/), настройка служб в

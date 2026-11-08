@@ -28,7 +28,7 @@ with patch.dict(sys.modules, {"fcntl": object()}):
 
 
 class AuthorizationTest(TestCase):
-    def test_cloud_reads_the_active_profile(self):
+    def test_cloud_reads_the_clone_profile(self):
         with patch("yc.which", return_value="yc"), patch("yc.subprocess.run") as run:
             run.side_effect = [subprocess.CompletedProcess([], 0, value)
                                for value in ("cloud\n", "folder\n", "profiletoken\n")]
@@ -36,10 +36,11 @@ class AuthorizationTest(TestCase):
                 cloud = Cloud()
                 self.assertEqual(os.environ["YC_TOKEN"], "oldtoken")
             self.assertEqual((cloud.cloud, cloud.folder, cloud.token), ("cloud", "folder", "profiletoken"))
+            config = ["yc", "--config", str(ROOT / ".tools/yc-config.yaml")]
             self.assertEqual([call.args[0] for call in run.call_args_list], [
-                ["yc", "config", "get", "cloud-id"],
-                ["yc", "config", "get", "folder-id"],
-                ["yc", "iam", "create-token", "--no-browser"],
+                [*config, "config", "get", "cloud-id"],
+                [*config, "config", "get", "folder-id"],
+                [*config, "iam", "create-token", "--no-browser"],
             ])
 
     def test_missing_profile_stops_before_cloud_or_terraform_calls(self):
@@ -47,8 +48,11 @@ class AuthorizationTest(TestCase):
             "yc.subprocess.run", side_effect=subprocess.CalledProcessError(1, ["yc"])
         ) as run, patch.object(Cloud, "confirm_folder") as api, patch.object(Terraform, "init") as init:
             lab = Lab(Path(path))
-            with self.assertRaisesRegex(RuntimeError, "yc init --no-browser"):
+            with self.assertRaisesRegex(RuntimeError, r"& \$yc init --no-browser"):
                 lab.deploy()
+            self.assertEqual(run.call_args_list[0].args[0], [
+                "yc", "--config", str(ROOT / ".tools/yc-config.yaml"), "config", "get", "cloud-id",
+            ])
             run.assert_called_once()
             api.assert_not_called()
             init.assert_not_called()
@@ -215,6 +219,55 @@ class StateTest(TestCase):
             with self.assertRaisesRegex(RuntimeError, "outside this clone"):
                 Lab(directory).clean()
             self.assertTrue(sentinel.exists())
+
+
+class DestroyCleanupTest(TestCase):
+    def setUp(self):
+        root = Path(self.enterContext(TemporaryDirectory())).resolve()
+        self.enterContext(patch("lab.ROOT", root))
+        config = root / "config"
+        config.mkdir()
+        (config / "lab.json").write_text(json.dumps(POLICY), encoding="utf-8")
+        self.local_policy = config / "lab.local.json"
+        self.local_policy.touch()
+        local = root / ".local"
+        local.mkdir()
+        self.lock = local / "operation.lock"
+        self.lock.touch()
+        self.lab = Lab(local)
+        context = {"provider": "yc", "cloud": "cloud", "folder": "folder", "name": "lab"}
+        self.lab.context.write_text(json.dumps(context), encoding="utf-8")
+        self.lab.tf.state.write_text('{"resources": []}', encoding="utf-8")
+        self.temp = root / ".tools/temp"
+        nested = self.temp / "logs"
+        nested.mkdir(parents=True)
+        (nested / "trace.log").touch()
+        (self.temp / "provider.log").touch()
+        self.yc_config = self.temp.parent / "yc-config.yaml"
+        self.yc_config.touch()
+        self.tool = self.temp.parent / "bin/terraform.exe"
+        self.tool.parent.mkdir()
+        self.tool.touch()
+        self.cloud = self.enterContext(patch("lab.Cloud")).return_value
+        self.cloud.cloud, self.cloud.folder = "cloud", "folder"
+
+    def test_confirmed_destroy_clears_temp_and_local_state(self):
+        self.cloud.inventory.return_value = set()
+        self.lab.destroy()
+        self.assertEqual(list(self.temp.iterdir()), [])
+        self.assertEqual(list(self.lab.local.iterdir()), [self.lock])
+        self.assertTrue(self.tool.exists())
+        self.assertTrue(self.yc_config.exists())
+        self.assertTrue(self.local_policy.exists())
+
+    def test_unconfirmed_destroy_preserves_temp_and_local_state(self):
+        self.cloud.inventory.side_effect = [set()] + [{("disk", "disk")}] * 10
+        with patch("lab.time.sleep"), self.assertRaisesRegex(RuntimeError, "Removal is incomplete"):
+            self.lab.destroy()
+        self.assertTrue((self.temp / "logs/trace.log").exists())
+        self.assertTrue(self.yc_config.exists())
+        self.assertTrue(self.lab.context.exists())
+        self.assertTrue(self.lab.tf.state.exists())
 
 
 class PublicAccessTest(TestCase):

@@ -150,8 +150,17 @@ class Lab:
     def clean(self):
         if self.local.resolve().parent != ROOT or not self.local.name.startswith(".local"):
             raise RuntimeError("Refusing cleanup outside this clone.")
-        for entry in self.local.iterdir():
-            if entry.name == "operation.lock":
+        temp = ROOT / ".tools/temp"
+        if temp.resolve() != temp:
+            raise RuntimeError("Refusing cleanup of a redirected .tools/temp directory.")
+        if temp.exists():
+            self.clean_directory(temp)
+        self.clean_directory(self.local, keep=("operation.lock",))
+
+    @staticmethod
+    def clean_directory(directory, *, keep=()):
+        for entry in directory.iterdir():
+            if entry.name in keep:
                 continue
             if entry.is_symlink() or (sys.platform == "win32" and entry.is_junction()):
                 raise RuntimeError(f"Refusing cleanup of linked path: {entry.name}")

@@ -27,11 +27,11 @@ TYPES = {
 }
 
 
-def profile_value(cli, *args, pattern):
+def profile_value(cli, config, *args, pattern):
     label = " ".join(args)
-    hint = "Check the active yc profile or run yc init --no-browser."
+    hint = "Set up the local YC profile with `& $yc init --no-browser` as shown in README.md."
     try:
-        result = subprocess.run([cli, *args], check=True, capture_output=True,
+        result = subprocess.run([cli, "--config", str(config), *args], check=True, capture_output=True,
                                 encoding="utf-8", errors="replace", timeout=60)
     except (OSError, subprocess.SubprocessError) as error:
         raise RuntimeError(f"yc {label} failed. {hint}") from error
@@ -43,14 +43,16 @@ def profile_value(cli, *args, pattern):
 
 class Cloud:
     def __init__(self):
-        bundled = Path(__file__).resolve().parents[1] / ".tools/bin/yc.exe"
+        tools = Path(__file__).resolve().parents[1] / ".tools"
+        bundled = tools / "bin/yc.exe"
         cli = which("yc") or (str(bundled) if bundled.is_file() else None)
         if not cli:
             raise RuntimeError("Install yc in PATH or place yc.exe in .tools/bin.")
 
-        self.cloud = profile_value(cli, "config", "get", "cloud-id", pattern=r"[a-z0-9]+")
-        self.folder = profile_value(cli, "config", "get", "folder-id", pattern=r"[a-z0-9]+")
-        self.token = profile_value(cli, "iam", "create-token", "--no-browser", pattern=r"\S+")
+        config = tools / "yc-config.yaml"
+        self.cloud = profile_value(cli, config, "config", "get", "cloud-id", pattern=r"[a-z0-9]+")
+        self.folder = profile_value(cli, config, "config", "get", "folder-id", pattern=r"[a-z0-9]+")
+        self.token = profile_value(cli, config, "iam", "create-token", "--no-browser", pattern=r"\S+")
 
     def get(self, base, path, *, missing_ok=False, **query):
         url = f"{base}/{path}?{urlencode(query)}"
