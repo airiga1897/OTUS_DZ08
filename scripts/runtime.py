@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 from ipaddress import IPv4Address, IPv4Network
 from pathlib import Path
+from shutil import which
 from urllib.request import urlopen
 import csv
 import json
@@ -89,7 +90,9 @@ class Terraform:
                    TF_IN_AUTOMATION="true", TF_INPUT="false")
         if token is not None:
             env["YC_TOKEN"] = token
-        return run("terraform", f"-chdir={ROOT / 'terraform'}", *args, capture=capture, env=env)
+        bundled = ROOT / ".tools/bin/terraform.exe"
+        cli = which("terraform") or (str(bundled) if os.name == "nt" and bundled.is_file() else "terraform")
+        return run(cli, f"-chdir={ROOT / 'terraform'}", *args, capture=capture, env=env)
 
     def init(self):
         self.call("init", "-input=false", "-lockfile=readonly")
